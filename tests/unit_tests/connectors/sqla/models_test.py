@@ -909,6 +909,109 @@ def test_sqla_table_link_escapes_url(mocker: MockerFixture) -> None:
     assert "<script>" not in str(link)
 
 
+@pytest.mark.parametrize(
+    "malicious_url",
+    [
+        "javascript:alert(document.cookie)",
+        "JavaScript:alert(1)",
+        "data:text/html,<script>alert(1)</script>",
+        "vbscript:MsgBox('xss')",
+    ],
+)
+def test_sqla_table_link_rejects_dangerous_uri_schemes(
+    mocker: MockerFixture,
+    malicious_url: str,
+) -> None:
+    """Dangerous URI schemes in explore_url are replaced with the safe default."""
+    database = Database(database_name="my_db")
+    table = SqlaTable(
+        table_name="safe_name",
+        database=database,
+        id=7,
+    )
+    mocker.patch.object(
+        SqlaTable,
+        "explore_url",
+        new_callable=mocker.PropertyMock,
+        return_value=malicious_url,
+    )
+    mocker.patch.object(
+        SqlaTable,
+        "type",
+        new_callable=mocker.PropertyMock,
+        return_value="table",
+    )
+
+    result = str(table.link)
+    assert malicious_url not in result
+    assert "javascript:" not in result.lower()
+    assert "data:" not in result.lower()
+    assert "vbscript:" not in result.lower()
+    assert "/explore/?datasource_type=table&amp;datasource_id=7" in result
+
+
+def test_sqla_table_link_allows_safe_urls(mocker: MockerFixture) -> None:
+    """Relative paths and http(s) URLs pass through unchanged."""
+    database = Database(database_name="my_db")
+    table = SqlaTable(
+        table_name="my_table",
+        database=database,
+        id=3,
+    )
+    safe_url = "/explore/?datasource_type=table&datasource_id=3"
+    mocker.patch.object(
+        SqlaTable,
+        "explore_url",
+        new_callable=mocker.PropertyMock,
+        return_value=safe_url,
+    )
+
+    result = str(table.link)
+    assert "datasource_id=3" in result
+    assert "my_table" in result
+
+
+def test_sqla_table_link_allows_https_url(mocker: MockerFixture) -> None:
+    """Absolute https URLs are preserved."""
+    database = Database(database_name="my_db")
+    table = SqlaTable(
+        table_name="my_table",
+        database=database,
+        id=4,
+    )
+    mocker.patch.object(
+        SqlaTable,
+        "explore_url",
+        new_callable=mocker.PropertyMock,
+        return_value="https://example.com/explore",
+    )
+
+    result = str(table.link)
+    assert "https://example.com/explore" in result
+
+
+def test_sqla_table_link_escapes_name_special_chars(mocker: MockerFixture) -> None:
+    """Ampersand, quotes, and angle brackets in the table name are escaped."""
+    database = Database(database_name="my_db")
+    table = SqlaTable(
+        table_name='A&B "quoted" <tagged>',
+        database=database,
+        id=5,
+    )
+    mocker.patch.object(
+        SqlaTable,
+        "explore_url",
+        new_callable=mocker.PropertyMock,
+        return_value="/explore/?datasource_type=table&datasource_id=5",
+    )
+
+    result = str(table.link)
+    assert "&amp;" in result
+    assert "&#34;" in result or "&quot;" in result
+    assert "&lt;tagged&gt;" in result
+    assert "<tagged>" not in result
+
+
 def test_data_for_slices_handles_missing_datasource(mocker: MockerFixture) -> None:
     """
     Test that data_for_slices gracefully handles a chart whose query_context

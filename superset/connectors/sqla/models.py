@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import builtins
 import logging
+import urllib.parse
 from collections import defaultdict
 from collections.abc import Hashable
 from dataclasses import dataclass, field
@@ -1348,9 +1349,14 @@ class SqlaTable(
     @property
     def link(self) -> Markup:
         name = escape(self.name)
-        url = escape(self.explore_url)
-        anchor = f'<a target="_blank" href="{url}">{name}</a>'
-        return Markup(anchor)
+        raw_url = self.explore_url or ""
+        parsed = urllib.parse.urlparse(raw_url)
+        if parsed.scheme and parsed.scheme.lower() not in ("http", "https"):
+            raw_url = (
+                f"/explore/?datasource_type={self.type}&datasource_id={self.id}"
+            )
+        anchor = f'<a target="_blank" href="{escape(raw_url)}">{name}</a>'
+        return Markup(anchor)  # nosec B704 — name and raw_url are escaped/validated above
 
     def get_catalog_perm(self) -> str | None:
         """Returns catalog permission if present, database one otherwise."""
