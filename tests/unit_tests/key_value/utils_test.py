@@ -176,6 +176,27 @@ def test_get_fallback_algorithms(config_value, expected_fallbacks) -> None:
     assert fallbacks == expected_fallbacks
 
 
+def test_md5_namespace_uses_usedforsecurity_false() -> None:
+    """Verify that _uuid_namespace_from_md5 calls md5(usedforsecurity=False)."""
+    from unittest.mock import patch
+
+    from superset.key_value.utils import _uuid_namespace_from_md5
+
+    with patch(
+        "superset.key_value.utils.md5", wraps=__import__("hashlib").md5
+    ) as mock_md5:
+        _uuid_namespace_from_md5("test_seed")
+        mock_md5.assert_called_once_with(usedforsecurity=False)
+
+
+def test_md5_namespace_output_stable() -> None:
+    """Verify MD5 namespace output is stable after usedforsecurity=False change."""
+    from superset.key_value.utils import _uuid_namespace_from_md5
+
+    expected = UUID("d81a8c4d-6522-9513-525d-6a5cef1c7c9d")
+    assert _uuid_namespace_from_md5("test_seed") == expected
+
+
 def test_get_fallback_algorithms_default() -> None:
     """Test fallback algorithms default to empty list if not configured."""
     from superset.key_value.utils import get_fallback_algorithms

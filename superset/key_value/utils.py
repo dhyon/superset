@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 import hashlib
-from hashlib import md5
+from hashlib import md5  # used only for legacy UUID namespace compatibility
 from secrets import token_urlsafe
 from typing import Any
 from uuid import UUID, uuid3
@@ -69,8 +69,14 @@ def decode_permalink_id(key: str, salt: str) -> int:
 
 
 def _uuid_namespace_from_md5(seed: str) -> UUID:
-    """Generate UUID namespace from MD5 hash (legacy compatibility)."""
-    md5_obj = md5()  # noqa: S324
+    """Generate UUID namespace from MD5 hash (legacy compatibility).
+
+    MD5 is used here solely for deterministic UUID namespace generation,
+    not for any security purpose (e.g., password hashing or integrity checks).
+    The usedforsecurity=False flag documents this intent and satisfies FIPS-mode
+    environments that restrict security-sensitive MD5 usage.
+    """
+    md5_obj = md5(usedforsecurity=False)
     md5_obj.update(seed.encode("utf-8"))
     return UUID(md5_obj.hexdigest())
 
