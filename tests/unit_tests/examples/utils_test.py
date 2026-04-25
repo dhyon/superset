@@ -20,6 +20,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import MagicMock, patch
 
+import pytest
 import yaml
 
 
@@ -204,3 +205,89 @@ def test_load_examples_from_configs_defaults(
         force_data=False,
     )
     mock_command.run.assert_called_once()
+
+
+@patch("superset.examples.utils.ImportExamplesCommand")
+def test_load_configs_from_directory_parses_valid_metadata(
+    mock_command_cls,
+    tmp_path: Path,
+):
+    """Valid metadata.yaml should be parsed and have 'type' stripped."""
+    from superset.examples.utils import load_configs_from_directory
+
+    metadata = {"type": "Dashboard", "version": "1.0.0", "timestamp": "2024-01-01"}
+    (tmp_path / "metadata.yaml").write_text(yaml.dump(metadata))
+
+    mock_command = MagicMock()
+    mock_command_cls.return_value = mock_command
+
+    load_configs_from_directory(tmp_path)
+
+    call_args = mock_command_cls.call_args
+    contents = call_args[0][0]
+    parsed = yaml.safe_load(contents["metadata.yaml"])
+    assert "type" not in parsed
+    assert parsed["version"] == "1.0.0"
+    assert parsed["timestamp"] == "2024-01-01"
+    mock_command.run.assert_called_once()
+
+
+@patch("superset.examples.utils.ImportExamplesCommand")
+def test_load_configs_from_directory_handles_empty_metadata(
+    mock_command_cls,
+    tmp_path: Path,
+):
+    """Empty metadata.yaml should result in an empty dict, not an error."""
+    from superset.examples.utils import load_configs_from_directory
+
+    (tmp_path / "metadata.yaml").write_text("")
+
+    mock_command = MagicMock()
+    mock_command_cls.return_value = mock_command
+
+    load_configs_from_directory(tmp_path)
+
+    call_args = mock_command_cls.call_args
+    contents = call_args[0][0]
+    parsed = yaml.safe_load(contents["metadata.yaml"])
+    assert parsed == {} or parsed is None or contents["metadata.yaml"] == "{}\n"
+    mock_command.run.assert_called_once()
+
+
+@patch("superset.examples.utils.ImportExamplesCommand")
+def test_load_configs_from_directory_missing_metadata_uses_default(
+    mock_command_cls,
+    tmp_path: Path,
+):
+    """When metadata.yaml is absent, a default empty dict should be used."""
+    from superset.examples.utils import load_configs_from_directory
+
+    mock_command = MagicMock()
+    mock_command_cls.return_value = mock_command
+
+    load_configs_from_directory(tmp_path)
+
+    call_args = mock_command_cls.call_args
+    contents = call_args[0][0]
+    parsed = yaml.safe_load(contents["metadata.yaml"])
+    assert parsed == {}
+    mock_command.run.assert_called_once()
+
+
+@patch("superset.examples.utils.ImportExamplesCommand")
+def test_load_configs_from_directory_uses_safe_yaml_loading(
+    mock_command_cls,
+    tmp_path: Path,
+):
+    """yaml.safe_load must be used; Python object tags must be rejected."""
+    from superset.examples.utils import load_configs_from_directory
+
+    (tmp_path / "metadata.yaml").write_text(
+        "!!python/object/apply:os.system ['echo pwned']"
+    )
+
+    mock_command = MagicMock()
+    mock_command_cls.return_value = mock_command
+
+    with pytest.raises(yaml.constructor.ConstructorError):
+        load_configs_from_directory(tmp_path)
