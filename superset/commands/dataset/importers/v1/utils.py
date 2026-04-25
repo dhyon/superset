@@ -19,6 +19,7 @@ import logging
 import re
 from typing import Any
 from urllib import request
+from urllib.parse import urlparse
 
 import pandas as pd
 from flask import current_app as app
@@ -80,6 +81,9 @@ def get_dtype(df: pd.DataFrame, dataset: SqlaTable) -> dict[str, VisitableType]:
     }
 
 
+ALLOWED_SCHEMES = {"http", "https"}
+
+
 def validate_data_uri(data_uri: str) -> None:
     """
     Validate that the data URI is configured on DATASET_IMPORT_ALLOWED_URLS
@@ -88,6 +92,10 @@ def validate_data_uri(data_uri: str) -> None:
     :param data_uri:
     :return:
     """
+    parsed = urlparse(data_uri)
+    if parsed.scheme not in ALLOWED_SCHEMES:
+        raise DatasetForbiddenDataURI()
+
     allowed_urls = app.config["DATASET_IMPORT_ALLOWED_DATA_URLS"]
     for allowed_url in allowed_urls:
         try:
@@ -206,7 +214,7 @@ def load_data(data_uri: str, dataset: SqlaTable, database: Database) -> None:
 
     validate_data_uri(data_uri)
     logger.info("Downloading data from %s", data_uri)
-    data = request.urlopen(data_uri)  # pylint: disable=consider-using-with  # noqa: S310
+    data = request.urlopen(data_uri)  # noqa: S310  # nosec B310  # scheme validated by validate_data_uri  # pylint: disable=consider-using-with
     if data_uri.endswith(".gz"):
         data = gzip.open(data)
     df = pd.read_csv(data, encoding="utf-8")

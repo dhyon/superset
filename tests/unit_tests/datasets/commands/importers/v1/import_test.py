@@ -783,3 +783,34 @@ def test_validate_data_uri(allowed_urls, data_uri, expected, exception_class):
     else:
         with pytest.raises(exception_class):
             validate_data_uri(data_uri)
+
+
+@pytest.mark.parametrize(
+    "data_uri",
+    [
+        "file:///etc/passwd",
+        "ftp://evil.com/data.csv",
+        "data:text/csv;base64,abc",
+        "gopher://evil.com",
+        "javascript:alert(1)",
+        "",
+    ],
+)
+def test_validate_data_uri_rejects_disallowed_schemes(data_uri: str) -> None:
+    """Reject URLs with schemes other than http/https (Bandit B310)."""
+    current_app.config["DATASET_IMPORT_ALLOWED_DATA_URLS"] = [r".*"]
+    with pytest.raises(DatasetForbiddenDataURI):
+        validate_data_uri(data_uri)
+
+
+@pytest.mark.parametrize(
+    "data_uri",
+    [
+        "http://example.com/data.csv",
+        "https://example.com/data.csv",
+    ],
+)
+def test_validate_data_uri_allows_http_and_https(data_uri: str) -> None:
+    """Allow http and https schemes through scheme validation."""
+    current_app.config["DATASET_IMPORT_ALLOWED_DATA_URLS"] = [r".*"]
+    validate_data_uri(data_uri)
