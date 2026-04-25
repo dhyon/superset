@@ -909,6 +909,115 @@ def test_sqla_table_link_escapes_url(mocker: MockerFixture) -> None:
     assert "<script>" not in str(link)
 
 
+def test_sqla_table_link_rejects_javascript_url(mocker: MockerFixture) -> None:
+    """
+    Test that link property rejects javascript: URLs in explore_url.
+    """
+    database = Database(database_name="my_db")
+    table = SqlaTable(
+        table_name="safe_table",
+        database=database,
+        id=1,
+    )
+
+    mocker.patch.object(
+        SqlaTable,
+        "explore_url",
+        new_callable=mocker.PropertyMock,
+        return_value='javascript:alert("xss")',
+    )
+    mocker.patch.object(
+        SqlaTable,
+        "type",
+        new_callable=mocker.PropertyMock,
+        return_value="table",
+    )
+
+    link = str(table.link)
+    assert "javascript:" not in link
+    assert 'href="/explore/?datasource_type=table&amp;datasource_id=1"' in link
+    assert ">safe_table</a>" in link
+
+
+def test_sqla_table_link_rejects_data_url(mocker: MockerFixture) -> None:
+    """
+    Test that link property rejects data: URLs in explore_url.
+    """
+    database = Database(database_name="my_db")
+    table = SqlaTable(
+        table_name="safe_table",
+        database=database,
+        id=2,
+    )
+
+    mocker.patch.object(
+        SqlaTable,
+        "explore_url",
+        new_callable=mocker.PropertyMock,
+        return_value="data:text/html,<script>alert(1)</script>",
+    )
+    mocker.patch.object(
+        SqlaTable,
+        "type",
+        new_callable=mocker.PropertyMock,
+        return_value="table",
+    )
+
+    link = str(table.link)
+    assert "data:" not in link
+    assert 'href="/explore/?datasource_type=table&amp;datasource_id=2"' in link
+
+
+def test_sqla_table_link_allows_safe_urls(mocker: MockerFixture) -> None:
+    """
+    Test that link property allows http/https and relative URLs.
+    """
+    database = Database(database_name="my_db")
+    table = SqlaTable(
+        table_name="my_table",
+        database=database,
+        id=3,
+    )
+
+    for safe_url in (
+        "/explore/?datasource_type=table&datasource_id=3",
+        "https://example.com/explore",
+        "http://example.com/explore",
+    ):
+        mocker.patch.object(
+            SqlaTable,
+            "explore_url",
+            new_callable=mocker.PropertyMock,
+            return_value=safe_url,
+        )
+        link = str(table.link)
+        assert "javascript:" not in link
+        assert "my_table" in link
+
+
+def test_sqla_table_link_escapes_name_with_html(mocker: MockerFixture) -> None:
+    """
+    Test that link text containing HTML special characters is escaped.
+    """
+    database = Database(database_name="my_db")
+    table = SqlaTable(
+        table_name="<img src=x onerror=alert(1)>",
+        database=database,
+        id=4,
+    )
+
+    mocker.patch.object(
+        SqlaTable,
+        "explore_url",
+        new_callable=mocker.PropertyMock,
+        return_value="/explore/?datasource_type=table&datasource_id=4",
+    )
+
+    link = str(table.link)
+    assert "<img" not in link
+    assert "&lt;img" in link
+
+
 def test_data_for_slices_handles_missing_datasource(mocker: MockerFixture) -> None:
     """
     Test that data_for_slices gracefully handles a chart whose query_context
