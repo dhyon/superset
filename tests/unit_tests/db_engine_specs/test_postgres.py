@@ -17,7 +17,7 @@
 
 from datetime import datetime
 from typing import Any, Optional
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from pytest_mock import MockerFixture
@@ -363,3 +363,79 @@ class TestRedshiftDetection:
         spec.update_params_from_encrypted_extra(database, params)
 
         assert "pool_events" not in params
+
+
+@patch("sqlalchemy.engine.Engine.connect")
+def test_get_cancel_query_id(engine_mock: MagicMock) -> None:
+    from superset.models.sql_lab import Query
+
+    query = Query()
+    cursor_mock = engine_mock.return_value.__enter__.return_value
+    cursor_mock.fetchone.return_value = [12345]
+    assert spec.get_cancel_query_id(cursor_mock, query) == 12345
+
+
+@patch("sqlalchemy.engine.Engine.connect")
+def test_cancel_query_valid_pid(engine_mock: MagicMock) -> None:
+    from superset.models.sql_lab import Query
+
+    query = Query()
+    cursor_mock = engine_mock.return_value.__enter__.return_value
+    assert spec.cancel_query(cursor_mock, query, "12345") is True
+    cursor_mock.execute.assert_called_once_with(
+        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE pid=%s",
+        (12345,),
+    )
+
+
+@patch("sqlalchemy.engine.Engine.connect")
+def test_cancel_query_integer_pid(engine_mock: MagicMock) -> None:
+    from superset.models.sql_lab import Query
+
+    query = Query()
+    cursor_mock = engine_mock.return_value.__enter__.return_value
+    assert spec.cancel_query(cursor_mock, query, "99") is True
+    cursor_mock.execute.assert_called_once_with(
+        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE pid=%s",
+        (99,),
+    )
+
+
+@patch("sqlalchemy.engine.Engine.connect")
+def test_cancel_query_rejects_sql_injection(engine_mock: MagicMock) -> None:
+    from superset.models.sql_lab import Query
+
+    query = Query()
+    cursor_mock = engine_mock.return_value.__enter__.return_value
+    assert spec.cancel_query(cursor_mock, query, "1; DROP TABLE users--") is False
+    cursor_mock.execute.assert_not_called()
+
+
+@patch("sqlalchemy.engine.Engine.connect")
+def test_cancel_query_rejects_non_numeric(engine_mock: MagicMock) -> None:
+    from superset.models.sql_lab import Query
+
+    query = Query()
+    cursor_mock = engine_mock.return_value.__enter__.return_value
+    assert spec.cancel_query(cursor_mock, query, "abc") is False
+    cursor_mock.execute.assert_not_called()
+
+
+@patch("sqlalchemy.engine.Engine.connect")
+def test_cancel_query_rejects_empty_string(engine_mock: MagicMock) -> None:
+    from superset.models.sql_lab import Query
+
+    query = Query()
+    cursor_mock = engine_mock.return_value.__enter__.return_value
+    assert spec.cancel_query(cursor_mock, query, "") is False
+    cursor_mock.execute.assert_not_called()
+
+
+@patch("sqlalchemy.engine.Engine.connect")
+def test_cancel_query_db_error(engine_mock: MagicMock) -> None:
+    from superset.models.sql_lab import Query
+
+    query = Query()
+    cursor_mock = engine_mock.return_value.__enter__.return_value
+    cursor_mock.execute.side_effect = Exception("connection lost")
+    assert spec.cancel_query(cursor_mock, query, "12345") is False
