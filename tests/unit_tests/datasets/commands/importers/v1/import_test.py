@@ -774,6 +774,12 @@ def test_import_dataset_without_owner_permission(
         ),
         ([], "https://host1.domain3.com/data.csv", False, DatasetForbiddenDataURI),
         (["*"], "https://host1.domain3.com/data.csv", False, re.error),
+        ([r".*"], "file:///etc/passwd", False, DatasetForbiddenDataURI),
+        ([r".*"], "ftp://example.com/data.csv", False, DatasetForbiddenDataURI),
+        ([r".*"], "data:text/csv;base64,abc", False, DatasetForbiddenDataURI),
+        ([r".*"], "gopher://example.com/1", False, DatasetForbiddenDataURI),
+        ([r".*"], "http://example.com/data.csv", True, None),
+        ([r".*"], "https://example.com/data.csv", True, None),
     ],
 )
 def test_validate_data_uri(allowed_urls, data_uri, expected, exception_class):
