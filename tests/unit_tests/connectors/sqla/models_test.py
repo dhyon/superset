@@ -909,6 +909,70 @@ def test_sqla_table_link_escapes_url(mocker: MockerFixture) -> None:
     assert "<script>" not in str(link)
 
 
+@pytest.mark.parametrize(
+    "malicious_url",
+    [
+        'javascript:alert("xss")',
+        "javascript:alert(document.cookie)",
+        'data:text/html,<script>alert("xss")</script>',
+        "vbscript:MsgBox('xss')",
+        'JaVaScRiPt:alert("xss")',
+    ],
+)
+def test_sqla_table_link_blocks_dangerous_schemes(
+    mocker: MockerFixture,
+    malicious_url: str,
+) -> None:
+    """
+    Test that link property blocks dangerous URL schemes like javascript: and data:.
+    """
+    database = Database(database_name="my_db")
+    table = SqlaTable(
+        table_name="safe_name",
+        database=database,
+        id=1,
+    )
+
+    mocker.patch.object(
+        SqlaTable,
+        "explore_url",
+        new_callable=mocker.PropertyMock,
+        return_value=malicious_url,
+    )
+
+    link = str(table.link)
+    assert malicious_url not in link
+    assert "javascript:" not in link.lower()
+    assert "data:" not in link.lower()
+    assert "vbscript:" not in link.lower()
+    assert 'href=""' in link
+
+
+def test_sqla_table_link_allows_safe_urls(mocker: MockerFixture) -> None:
+    """
+    Test that link property allows safe relative and https URLs.
+    """
+    database = Database(database_name="my_db")
+    table = SqlaTable(
+        table_name="my_table",
+        database=database,
+        id=1,
+    )
+
+    safe_url = "/explore/?datasource_type=table&datasource_id=1"
+    mocker.patch.object(
+        SqlaTable,
+        "explore_url",
+        new_callable=mocker.PropertyMock,
+        return_value=safe_url,
+    )
+
+    link = str(table.link)
+    assert "my_table" in link
+    assert "datasource_type=table" in link
+    assert "datasource_id=1" in link
+
+
 def test_data_for_slices_handles_missing_datasource(mocker: MockerFixture) -> None:
     """
     Test that data_for_slices gracefully handles a chart whose query_context
