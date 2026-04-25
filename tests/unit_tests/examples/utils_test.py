@@ -204,3 +204,68 @@ def test_load_examples_from_configs_defaults(
         force_data=False,
     )
     mock_command.run.assert_called_once()
+
+
+@patch("superset.examples.utils.ImportExamplesCommand")
+def test_load_configs_from_directory_strips_type_from_metadata(mock_command_cls):
+    """load_configs_from_directory must parse metadata safely
+    and strip the 'type' key."""
+    from superset.examples.utils import load_configs_from_directory
+
+    mock_command = MagicMock()
+    mock_command_cls.return_value = mock_command
+
+    with TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        (root / "metadata.yaml").write_text(
+            yaml.dump({"type": "Dashboard", "version": "1.0.0"})
+        )
+        (root / "dashboards").mkdir()
+        (root / "dashboards" / "my_dash.yaml").write_text(
+            yaml.dump({"dashboard_title": "My Dashboard"})
+        )
+
+        load_configs_from_directory(root)
+
+    passed_contents = mock_command_cls.call_args[0][0]
+    metadata = yaml.safe_load(passed_contents["metadata.yaml"])
+    assert "type" not in metadata
+    assert metadata["version"] == "1.0.0"
+
+
+@patch("superset.examples.utils.ImportExamplesCommand")
+def test_load_configs_from_directory_handles_empty_metadata(mock_command_cls):
+    """When metadata.yaml is missing, an empty dict should be used."""
+    from superset.examples.utils import load_configs_from_directory
+
+    mock_command = MagicMock()
+    mock_command_cls.return_value = mock_command
+
+    with TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        (root / "dashboards").mkdir()
+        (root / "dashboards" / "dash.yaml").write_text(
+            yaml.dump({"dashboard_title": "D"})
+        )
+
+        load_configs_from_directory(root)
+
+    passed_contents = mock_command_cls.call_args[0][0]
+    metadata = yaml.safe_load(passed_contents["metadata.yaml"])
+    assert metadata == {}
+
+
+def test_load_configs_from_directory_rejects_malformed_yaml():
+    """Malformed YAML metadata must raise a YAML parse error, not silently pass."""
+    from superset.examples.utils import load_configs_from_directory
+
+    with TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        (root / "metadata.yaml").write_text("{{invalid: yaml: [")
+
+        try:
+            load_configs_from_directory(root)
+            raised = False
+        except yaml.YAMLError:
+            raised = True
+        assert raised, "Expected yaml.YAMLError for malformed metadata"
