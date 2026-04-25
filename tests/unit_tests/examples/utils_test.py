@@ -20,6 +20,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import MagicMock, patch
 
+import pytest
 import yaml
 
 
@@ -204,3 +205,85 @@ def test_load_examples_from_configs_defaults(
         force_data=False,
     )
     mock_command.run.assert_called_once()
+
+
+@patch("superset.examples.utils.ImportExamplesCommand")
+def test_load_configs_from_directory_strips_type_from_metadata(
+    mock_command_cls: MagicMock,
+) -> None:
+    """load_configs_from_directory() strips the 'type' key from metadata.yaml
+    so that any exported model can be re-imported regardless of its original type.
+    """
+    from superset.examples.utils import load_configs_from_directory
+
+    mock_command_cls.return_value = MagicMock()
+
+    with TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        (root / "metadata.yaml").write_text(
+            yaml.dump(
+                {
+                    "version": "1.0.0",
+                    "type": "SqlaTable",
+                    "timestamp": "2024-01-01T00:00:00+00:00",
+                }
+            )
+        )
+        load_configs_from_directory(root)
+
+    contents = mock_command_cls.call_args[0][0]
+    result_metadata = yaml.safe_load(contents["metadata.yaml"])
+    assert "type" not in result_metadata
+    assert result_metadata["version"] == "1.0.0"
+    assert result_metadata["timestamp"] == "2024-01-01T00:00:00+00:00"
+
+
+@patch("superset.examples.utils.ImportExamplesCommand")
+def test_load_configs_from_directory_handles_missing_metadata(
+    mock_command_cls: MagicMock,
+) -> None:
+    """When no metadata.yaml exists, produces a valid empty metadata dict."""
+    from superset.examples.utils import load_configs_from_directory
+
+    mock_command_cls.return_value = MagicMock()
+
+    with TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        (root / "dashboard.yaml").write_text(
+            yaml.dump({"dashboard_title": "Test", "version": "1.0.0"})
+        )
+        load_configs_from_directory(root)
+
+    contents = mock_command_cls.call_args[0][0]
+    result_metadata = yaml.safe_load(contents["metadata.yaml"])
+    assert result_metadata == {}
+
+
+@patch("superset.examples.utils.ImportExamplesCommand")
+def test_load_configs_from_directory_malformed_yaml_raises(
+    mock_command_cls: MagicMock,
+) -> None:
+    """Malformed YAML in metadata.yaml raises a YAML parsing error."""
+    from superset.examples.utils import load_configs_from_directory
+
+    with TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        (root / "metadata.yaml").write_text("{{invalid: yaml: [unterminated")
+        with pytest.raises(yaml.YAMLError):
+            load_configs_from_directory(root)
+
+
+@patch("superset.examples.utils.ImportExamplesCommand")
+def test_load_configs_from_directory_rejects_python_yaml_tags(
+    mock_command_cls: MagicMock,
+) -> None:
+    """safe_load rejects Python-specific YAML tags (e.g. !!python/object)."""
+    from superset.examples.utils import load_configs_from_directory
+
+    with TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        (root / "metadata.yaml").write_text(
+            "exploit: !!python/object/apply:os.system ['echo pwned']"
+        )
+        with pytest.raises(yaml.YAMLError):
+            load_configs_from_directory(root)
