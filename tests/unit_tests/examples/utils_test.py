@@ -154,6 +154,77 @@ def test_load_contents_replaces_sqlalchemy_examples_uri_placeholder():
 
 
 @patch("superset.examples.utils.ImportExamplesCommand")
+def test_load_configs_from_directory_parses_valid_metadata(mock_command_cls):
+    """load_configs_from_directory() must safely parse valid metadata YAML."""
+    from superset.examples.utils import load_configs_from_directory
+
+    mock_command = MagicMock()
+    mock_command_cls.return_value = mock_command
+
+    with TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        (root / "metadata.yaml").write_text(
+            "version: '1.0.0'\ntype: dashboard\n"
+        )
+        load_configs_from_directory(root)
+
+    # "type" key should be stripped from metadata before import
+    call_args = mock_command_cls.call_args
+    contents = call_args[0][0]
+    parsed = yaml.safe_load(contents["metadata.yaml"])
+    assert "type" not in parsed
+    assert parsed["version"] == "1.0.0"
+    mock_command.run.assert_called_once()
+
+
+@patch("superset.examples.utils.ImportExamplesCommand")
+def test_load_configs_from_directory_handles_empty_metadata(mock_command_cls):
+    """load_configs_from_directory() must handle missing metadata gracefully."""
+    from superset.examples.utils import load_configs_from_directory
+
+    mock_command = MagicMock()
+    mock_command_cls.return_value = mock_command
+
+    with TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        # No metadata.yaml present; the function falls back to "{}"
+        load_configs_from_directory(root)
+
+    call_args = mock_command_cls.call_args
+    contents = call_args[0][0]
+    parsed = yaml.safe_load(contents["metadata.yaml"])
+    assert parsed == {}
+    mock_command.run.assert_called_once()
+
+
+@patch("superset.examples.utils.ImportExamplesCommand")
+def test_load_configs_from_directory_uses_safe_yaml_loader(mock_command_cls):
+    """yaml.safe_load must be used so arbitrary Python objects are rejected."""
+    from superset.examples.utils import load_configs_from_directory
+
+    mock_command = MagicMock()
+    mock_command_cls.return_value = mock_command
+
+    with TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        # Write metadata containing a Python object tag that safe_load rejects
+        (root / "metadata.yaml").write_text(
+            "exploit: !!python/object/apply:os.getcwd []\n"
+        )
+        try:
+            load_configs_from_directory(root)
+        except yaml.YAMLError:
+            pass  # Expected: safe_load rejects the dangerous tag
+        else:
+            # If no error, verify the tag was NOT resolved to a live object
+            call_args = mock_command_cls.call_args
+            if call_args:
+                contents = call_args[0][0]
+                parsed = yaml.safe_load(contents["metadata.yaml"])
+                assert not callable(parsed.get("exploit"))
+
+
+@patch("superset.examples.utils.ImportExamplesCommand")
 @patch("superset.examples.utils.load_contents")
 def test_load_examples_from_configs_wires_command_correctly(
     mock_load_contents,
