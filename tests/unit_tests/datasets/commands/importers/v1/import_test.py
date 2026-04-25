@@ -783,3 +783,32 @@ def test_validate_data_uri(allowed_urls, data_uri, expected, exception_class):
     else:
         with pytest.raises(exception_class):
             validate_data_uri(data_uri)
+
+
+@pytest.mark.parametrize(
+    "data_uri",
+    [
+        "file:///etc/passwd",
+        "ftp://evil.com/data.csv",
+        "gopher://evil.com/",
+        "data:text/csv,col1%0Aval1",
+        "javascript:alert(1)",
+        "",
+    ],
+)
+def test_validate_data_uri_rejects_disallowed_schemes(data_uri: str) -> None:
+    current_app.config["DATASET_IMPORT_ALLOWED_DATA_URLS"] = [r".*"]
+    with pytest.raises(DatasetForbiddenDataURI):
+        validate_data_uri(data_uri)
+
+
+@pytest.mark.parametrize(
+    "data_uri",
+    [
+        "https://example.com/data.csv",
+        "http://example.com/data.csv",
+    ],
+)
+def test_validate_data_uri_allows_http_and_https(data_uri: str) -> None:
+    current_app.config["DATASET_IMPORT_ALLOWED_DATA_URLS"] = [r".*"]
+    validate_data_uri(data_uri)
