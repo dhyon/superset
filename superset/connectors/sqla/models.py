@@ -1345,12 +1345,29 @@ class SqlaTable(
                 return tbl
         return None
 
+    @staticmethod
+    def _sanitize_href(raw_url: str) -> str:
+        """Return *raw_url* only when its scheme is safe for an href.
+
+        Allows http, https, and scheme-relative / path-relative URLs.
+        Returns ``#`` for anything else (e.g. ``javascript:`` URIs).
+        """
+        from urllib.parse import urlparse
+
+        try:
+            parsed = urlparse(raw_url)
+        except ValueError:
+            return "#"
+        if parsed.scheme and parsed.scheme not in ("http", "https"):
+            return "#"
+        return raw_url
+
     @property
     def link(self) -> Markup:
         name = escape(self.name)
-        url = escape(self.explore_url)
-        anchor = f'<a target="_blank" href="{url}">{name}</a>'
-        return Markup(anchor)
+        href = escape(self._sanitize_href(self.explore_url))
+        anchor = f'<a target="_blank" href="{href}">{name}</a>'
+        return Markup(anchor)  # noqa: S704
 
     def get_catalog_perm(self) -> str | None:
         """Returns catalog permission if present, database one otherwise."""

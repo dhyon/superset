@@ -909,6 +909,65 @@ def test_sqla_table_link_escapes_url(mocker: MockerFixture) -> None:
     assert "<script>" not in str(link)
 
 
+@pytest.mark.parametrize(
+    "url,expected_href",
+    [
+        ("javascript:alert(1)", "#"),
+        ("javascript:alert(document.cookie)", "#"),
+        ("JaVaScRiPt:alert(1)", "#"),
+        ("data:text/html,<script>alert(1)</script>", "#"),
+        ("vbscript:MsgBox('xss')", "#"),
+        (
+            "/explore/?datasource_type=table&datasource_id=1",
+            "/explore/?datasource_type=table&amp;datasource_id=1",
+        ),
+        ("https://example.com/explore", "https://example.com/explore"),
+        ("http://example.com/explore", "http://example.com/explore"),
+    ],
+)
+def test_sqla_table_link_sanitizes_href(
+    mocker: MockerFixture,
+    url: str,
+    expected_href: str,
+) -> None:
+    """Verify that dangerous URL schemes are replaced with '#' in the href."""
+    database = Database(database_name="my_db")
+    table = SqlaTable(table_name="safe_name", database=database, id=1)
+
+    mocker.patch.object(
+        SqlaTable,
+        "explore_url",
+        new_callable=mocker.PropertyMock,
+        return_value=url,
+    )
+
+    link_str = str(table.link)
+    assert f'href="{expected_href}"' in link_str
+
+
+def test_sqla_table_link_escapes_name_and_href(mocker: MockerFixture) -> None:
+    """Ensure both name and href are HTML-escaped inside the anchor."""
+    database = Database(database_name="my_db")
+    table = SqlaTable(
+        table_name='<img src=x onerror="alert(1)">',
+        database=database,
+        id=1,
+    )
+
+    mocker.patch.object(
+        SqlaTable,
+        "explore_url",
+        new_callable=mocker.PropertyMock,
+        return_value='/explore/?q="><script>alert(1)</script>',
+    )
+
+    link_str = str(table.link)
+    assert "<img" not in link_str
+    assert "<script>" not in link_str
+    assert "&lt;img" in link_str
+    assert "&lt;script&gt;" in link_str
+
+
 def test_data_for_slices_handles_missing_datasource(mocker: MockerFixture) -> None:
     """
     Test that data_for_slices gracefully handles a chart whose query_context
