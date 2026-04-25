@@ -19,6 +19,7 @@ import logging
 import re
 from typing import Any
 from urllib import request
+from urllib.parse import urlparse
 
 import pandas as pd
 from flask import current_app as app
@@ -192,6 +193,16 @@ def import_dataset(  # noqa: C901
     return dataset
 
 
+ALLOWED_SCHEMES = {"http", "https"}
+
+
+def _validate_data_uri_scheme(data_uri: str) -> None:
+    """Reject URL schemes other than http/https to prevent local file access."""
+    parsed = urlparse(data_uri)
+    if parsed.scheme not in ALLOWED_SCHEMES:
+        raise DatasetForbiddenDataURI()
+
+
 def load_data(data_uri: str, dataset: SqlaTable, database: Database) -> None:
     """
     Load data from a data URI into a dataset.
@@ -205,6 +216,7 @@ def load_data(data_uri: str, dataset: SqlaTable, database: Database) -> None:
     data_uri = normalize_example_data_url(data_uri)
 
     validate_data_uri(data_uri)
+    _validate_data_uri_scheme(data_uri)
     logger.info("Downloading data from %s", data_uri)
     data = request.urlopen(data_uri)  # pylint: disable=consider-using-with  # noqa: S310
     if data_uri.endswith(".gz"):

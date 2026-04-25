@@ -34,6 +34,7 @@ from superset.commands.dataset.exceptions import (
     DatasetForbiddenDataURI,
 )
 from superset.commands.dataset.importers.v1.utils import (
+    _validate_data_uri_scheme,
     import_dataset,
     validate_data_uri,
 )
@@ -783,3 +784,23 @@ def test_validate_data_uri(allowed_urls, data_uri, expected, exception_class):
     else:
         with pytest.raises(exception_class):
             validate_data_uri(data_uri)
+
+
+@pytest.mark.parametrize(
+    "data_uri,should_pass",
+    [
+        ("https://example.com/data.csv", True),
+        ("http://example.com/data.csv", True),
+        ("file:///etc/passwd", False),
+        ("ftp://example.com/data.csv", False),
+        ("data:text/csv;base64,abc", False),
+        ("gopher://evil.com/", False),
+        ("", False),
+    ],
+)
+def test_validate_data_uri_scheme(data_uri: str, should_pass: bool) -> None:
+    if should_pass:
+        _validate_data_uri_scheme(data_uri)
+    else:
+        with pytest.raises(DatasetForbiddenDataURI):
+            _validate_data_uri_scheme(data_uri)
