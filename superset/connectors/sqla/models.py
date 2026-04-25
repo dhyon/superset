@@ -24,6 +24,7 @@ from collections.abc import Hashable
 from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any, Callable, cast, Optional, Union
+from urllib.parse import urlparse
 
 import pandas as pd
 import sqlalchemy as sa
@@ -32,7 +33,7 @@ from flask_appbuilder import Model
 from flask_appbuilder.security.sqla.models import User
 from flask_babel import gettext as __, lazy_gettext as _
 from jinja2.exceptions import TemplateError
-from markupsafe import escape, Markup
+from markupsafe import Markup
 from sqlalchemy import (
     and_,
     Boolean,
@@ -1347,10 +1348,13 @@ class SqlaTable(
 
     @property
     def link(self) -> Markup:
-        name = escape(self.name)
-        url = escape(self.explore_url)
-        anchor = f'<a target="_blank" href="{url}">{name}</a>'
-        return Markup(anchor)
+        raw_url = self.explore_url or ""
+        parsed = urlparse(raw_url)
+        if parsed.scheme and parsed.scheme not in ("http", "https"):
+            raw_url = f"/explore/?datasource_type={self.type}&datasource_id={self.id}"
+        return Markup(  # noqa: S704
+            '<a target="_blank" href="{url}">{name}</a>'
+        ).format(url=raw_url, name=self.name)
 
     def get_catalog_perm(self) -> str | None:
         """Returns catalog permission if present, database one otherwise."""
