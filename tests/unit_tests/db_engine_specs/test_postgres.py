@@ -363,3 +363,46 @@ class TestRedshiftDetection:
         spec.update_params_from_encrypted_extra(database, params)
 
         assert "pool_events" not in params
+
+
+def test_cancel_query_valid_pid() -> None:
+    """cancel_query uses parameterized SQL for a valid integer PID."""
+    from superset.models.sql_lab import Query
+
+    cursor = MagicMock()
+    query = Query()
+    assert spec.cancel_query(cursor, query, "12345") is True
+    cursor.execute.assert_called_once_with(
+        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE pid=%s",
+        (12345,),
+    )
+
+
+@pytest.mark.parametrize(
+    "invalid_id",
+    [
+        "not_a_number",
+        "'; DROP TABLE pg_stat_activity; --",
+        "",
+        "12.34",
+        "0x1f",
+    ],
+)
+def test_cancel_query_invalid_pid(invalid_id: str) -> None:
+    """cancel_query rejects non-integer cancel_query_id values."""
+    from superset.models.sql_lab import Query
+
+    cursor = MagicMock()
+    query = Query()
+    assert spec.cancel_query(cursor, query, invalid_id) is False
+    cursor.execute.assert_not_called()
+
+
+def test_cancel_query_execution_error() -> None:
+    """cancel_query returns False when cursor.execute raises."""
+    from superset.models.sql_lab import Query
+
+    cursor = MagicMock()
+    cursor.execute.side_effect = Exception("connection lost")
+    query = Query()
+    assert spec.cancel_query(cursor, query, "999") is False
