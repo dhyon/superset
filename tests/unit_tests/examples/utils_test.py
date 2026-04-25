@@ -20,6 +20,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import MagicMock, patch
 
+import pytest
 import yaml
 
 
@@ -204,3 +205,61 @@ def test_load_examples_from_configs_defaults(
         force_data=False,
     )
     mock_command.run.assert_called_once()
+
+
+@patch("superset.examples.utils.ImportExamplesCommand")
+def test_load_configs_from_directory_strips_type_from_metadata(
+    mock_command_cls: MagicMock,
+) -> None:
+    """load_configs_from_directory() must parse metadata via safe YAML loading
+    and strip the 'type' key so any exported model can be re-imported."""
+    from superset.examples.utils import load_configs_from_directory
+
+    mock_command = MagicMock()
+    mock_command_cls.return_value = mock_command
+
+    with TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        (root / "metadata.yaml").write_text(
+            "type: dashboard\nversion: '1.0.0'\n"
+        )
+        load_configs_from_directory(root)
+
+    call_args = mock_command_cls.call_args
+    contents: dict[str, str] = call_args[0][0]
+    parsed = yaml.safe_load(contents["metadata.yaml"])
+    assert "type" not in parsed
+    assert parsed["version"] == "1.0.0"
+
+
+@patch("superset.examples.utils.ImportExamplesCommand")
+def test_load_configs_from_directory_handles_empty_metadata(
+    mock_command_cls: MagicMock,
+) -> None:
+    """When metadata.yaml is absent, the fallback '{}' must produce an empty dict."""
+    from superset.examples.utils import load_configs_from_directory
+
+    mock_command = MagicMock()
+    mock_command_cls.return_value = mock_command
+
+    with TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        (root / "dashboards").mkdir()
+        (root / "dashboards" / "example.yaml").write_text("title: test\n")
+        load_configs_from_directory(root)
+
+    call_args = mock_command_cls.call_args
+    contents: dict[str, str] = call_args[0][0]
+    parsed = yaml.safe_load(contents["metadata.yaml"])
+    assert parsed == {}
+
+
+def test_load_configs_from_directory_rejects_malformed_yaml() -> None:
+    """Malformed YAML in metadata.yaml must raise a YAML parsing error."""
+    from superset.examples.utils import load_configs_from_directory
+
+    with TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        (root / "metadata.yaml").write_text("{{invalid: yaml: [")
+        with pytest.raises(yaml.YAMLError):
+            load_configs_from_directory(root)
