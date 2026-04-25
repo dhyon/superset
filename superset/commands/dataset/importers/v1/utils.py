@@ -19,6 +19,7 @@ import logging
 import re
 from typing import Any
 from urllib import request
+from urllib.parse import urlparse
 
 import pandas as pd
 from flask import current_app as app
@@ -37,6 +38,7 @@ from superset.utils.core import get_user
 
 logger = logging.getLogger(__name__)
 
+ALLOWED_DATA_URI_SCHEMES = {"http", "https"}
 CHUNKSIZE = 512
 VARCHAR = re.compile(r"VARCHAR\((\d+)\)", re.IGNORECASE)
 
@@ -82,12 +84,16 @@ def get_dtype(df: pd.DataFrame, dataset: SqlaTable) -> dict[str, VisitableType]:
 
 def validate_data_uri(data_uri: str) -> None:
     """
-    Validate that the data URI is configured on DATASET_IMPORT_ALLOWED_URLS
-    has a valid URL.
+    Validate that the data URI uses an allowed scheme and is configured on
+    DATASET_IMPORT_ALLOWED_URLS.
 
     :param data_uri:
     :return:
     """
+    parsed = urlparse(data_uri)
+    if parsed.scheme.lower() not in ALLOWED_DATA_URI_SCHEMES:
+        raise DatasetForbiddenDataURI()
+
     allowed_urls = app.config["DATASET_IMPORT_ALLOWED_DATA_URLS"]
     for allowed_url in allowed_urls:
         try:
