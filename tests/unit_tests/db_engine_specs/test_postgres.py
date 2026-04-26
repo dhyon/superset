@@ -17,7 +17,7 @@
 
 from datetime import datetime
 from typing import Any, Optional
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from pytest_mock import MockerFixture
@@ -363,3 +363,49 @@ class TestRedshiftDetection:
         spec.update_params_from_encrypted_extra(database, params)
 
         assert "pool_events" not in params
+
+
+@patch("sqlalchemy.engine.Engine.connect")
+def test_cancel_query_valid_pid(engine_mock: MagicMock) -> None:
+    """cancel_query succeeds with a valid integer PID and uses parameterized SQL."""
+    from superset.models.sql_lab import Query
+
+    query = Query()
+    cursor_mock = engine_mock.return_value.__enter__.return_value
+    assert spec.cancel_query(cursor_mock, query, "12345") is True
+    cursor_mock.execute.assert_called_once_with(
+        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE pid=%s",
+        (12345,),
+    )
+
+
+@patch("sqlalchemy.engine.Engine.connect")
+def test_cancel_query_execution_error(engine_mock: MagicMock) -> None:
+    """cancel_query returns False when cursor.execute raises an exception."""
+    from superset.models.sql_lab import Query
+
+    query = Query()
+    cursor_mock = engine_mock.return_value.__enter__.return_value
+    cursor_mock.execute.side_effect = Exception("connection lost")
+    assert spec.cancel_query(cursor_mock, query, "12345") is False
+
+
+@pytest.mark.parametrize(
+    "bad_id",
+    [
+        "not_a_number",
+        "'; DROP TABLE--",
+        "",
+        "12.34",
+        "12 OR 1=1",
+        None,
+    ],
+)
+def test_cancel_query_rejects_invalid_pid(bad_id: Any) -> None:
+    """cancel_query returns False for non-integer cancel_query_id values."""
+    from superset.models.sql_lab import Query
+
+    query = Query()
+    cursor_mock = MagicMock()
+    assert spec.cancel_query(cursor_mock, query, bad_id) is False
+    cursor_mock.execute.assert_not_called()
