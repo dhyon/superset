@@ -977,3 +977,72 @@ def test_owners_data_includes_email(mocker: MockerFixture) -> None:
         "id": 1,
         "email": "john@example.com",
     }
+
+
+def test_sqla_table_link_blocks_javascript_url(mocker: MockerFixture) -> None:
+    """
+    Test that link property blocks javascript: URLs in href.
+    """
+    database = Database(database_name="my_db")
+    table = SqlaTable(
+        table_name="safe_name",
+        database=database,
+        id=1,
+    )
+
+    mocker.patch.object(
+        SqlaTable,
+        "explore_url",
+        new_callable=mocker.PropertyMock,
+        return_value='javascript:alert("xss")',
+    )
+
+    link = table.link
+    assert "javascript:" not in str(link)
+    assert 'href=""' in str(link)
+
+
+def test_sqla_table_link_blocks_data_url(mocker: MockerFixture) -> None:
+    """
+    Test that link property blocks data: URLs in href.
+    """
+    database = Database(database_name="my_db")
+    table = SqlaTable(
+        table_name="safe_name",
+        database=database,
+        id=1,
+    )
+
+    mocker.patch.object(
+        SqlaTable,
+        "explore_url",
+        new_callable=mocker.PropertyMock,
+        return_value="data:text/html,<script>alert(1)</script>",
+    )
+
+    link = table.link
+    assert "data:" not in str(link)
+    assert 'href=""' in str(link)
+
+
+def test_sqla_table_link_allows_relative_url(mocker: MockerFixture) -> None:
+    """
+    Test that link property allows safe relative URLs.
+    """
+    database = Database(database_name="my_db")
+    table = SqlaTable(
+        table_name="safe_name",
+        database=database,
+        id=1,
+    )
+
+    mocker.patch.object(
+        SqlaTable,
+        "explore_url",
+        new_callable=mocker.PropertyMock,
+        return_value="/explore/?datasource_type=table&datasource_id=1",
+    )
+
+    link = table.link
+    assert "/explore/" in str(link)
+    assert "safe_name" in str(link)
