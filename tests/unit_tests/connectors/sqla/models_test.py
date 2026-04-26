@@ -909,6 +909,76 @@ def test_sqla_table_link_escapes_url(mocker: MockerFixture) -> None:
     assert "<script>" not in str(link)
 
 
+def test_sqla_table_link_blocks_javascript_url(mocker: MockerFixture) -> None:
+    """
+    Test that link property blocks javascript: URLs in explore_url.
+    """
+    database = Database(database_name="my_db")
+    table = SqlaTable(
+        table_name="safe_name",
+        database=database,
+        id=1,
+    )
+
+    mocker.patch.object(
+        SqlaTable,
+        "explore_url",
+        new_callable=mocker.PropertyMock,
+        return_value='javascript:alert("xss")',
+    )
+
+    link = table.link
+    assert "javascript:" not in str(link)
+    assert 'href="#"' in str(link)
+    assert "safe_name" in str(link)
+
+
+def test_sqla_table_link_blocks_data_url(mocker: MockerFixture) -> None:
+    """
+    Test that link property blocks data: URLs in explore_url.
+    """
+    database = Database(database_name="my_db")
+    table = SqlaTable(
+        table_name="safe_name",
+        database=database,
+        id=1,
+    )
+
+    mocker.patch.object(
+        SqlaTable,
+        "explore_url",
+        new_callable=mocker.PropertyMock,
+        return_value="data:text/html,<script>alert(1)</script>",
+    )
+
+    link = table.link
+    assert "data:" not in str(link)
+    assert 'href="#"' in str(link)
+
+
+def test_sqla_table_link_allows_safe_relative_url(mocker: MockerFixture) -> None:
+    """
+    Test that link property preserves safe relative URLs.
+    """
+    database = Database(database_name="my_db")
+    table = SqlaTable(
+        table_name="safe_name",
+        database=database,
+        id=1,
+    )
+
+    mocker.patch.object(
+        SqlaTable,
+        "explore_url",
+        new_callable=mocker.PropertyMock,
+        return_value="/explore/?datasource_type=table&datasource_id=1",
+    )
+
+    link = table.link
+    assert "/explore/?datasource_type=table" in str(link)
+    assert "safe_name" in str(link)
+
+
 def test_data_for_slices_handles_missing_datasource(mocker: MockerFixture) -> None:
     """
     Test that data_for_slices gracefully handles a chart whose query_context
