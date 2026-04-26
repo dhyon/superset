@@ -156,6 +156,28 @@ def test_get_deterministic_uuid_different_algorithms() -> None:
     assert uuid_md5 != uuid_sha256
 
 
+def test_uuid_namespace_from_md5_uses_usedforsecurity_false(mocker) -> None:
+    """Test that _uuid_namespace_from_md5 passes usedforsecurity=False."""
+    from superset.key_value.utils import _uuid_namespace_from_md5
+
+    spy = mocker.patch(
+        "superset.key_value.utils.hashlib.md5", wraps=__import__("hashlib").md5
+    )
+    _uuid_namespace_from_md5("test_seed")
+    spy.assert_called_once()
+    _, kwargs = spy.call_args
+    assert kwargs.get("usedforsecurity") is False
+
+
+def test_uuid_namespace_from_md5_output_stability() -> None:
+    """Test that MD5 namespace output remains stable across calls."""
+    from superset.key_value.utils import _uuid_namespace_from_md5
+
+    expected = UUID("d81a8c4d-6522-9513-525d-6a5cef1c7c9d")
+    assert _uuid_namespace_from_md5("test_seed") == expected
+    assert _uuid_namespace_from_md5("test_seed") == expected
+
+
 @pytest.mark.parametrize(
     "config_value,expected_fallbacks",
     [
