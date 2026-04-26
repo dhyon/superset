@@ -363,3 +363,62 @@ class TestRedshiftDetection:
         spec.update_params_from_encrypted_extra(database, params)
 
         assert "pool_events" not in params
+
+
+@pytest.mark.parametrize(
+    "cancel_query_id,expected",
+    [
+        (123, True),
+        ("456", True),
+    ],
+)
+def test_cancel_query_valid_pid(cancel_query_id: Any, expected: bool) -> None:
+    """cancel_query succeeds with a valid integer PID and uses parameterized SQL."""
+    from superset.models.sql_lab import Query
+
+    query = Query()
+    cursor = MagicMock()
+
+    result = spec.cancel_query(cursor, query, cancel_query_id)
+
+    assert result is expected
+    cursor.execute.assert_called_once_with(
+        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE pid=%s",
+        (int(cancel_query_id),),
+    )
+
+
+@pytest.mark.parametrize(
+    "cancel_query_id",
+    [
+        "not_a_number",
+        "1; DROP TABLE users",
+        "",
+        None,
+        "12.34",
+    ],
+)
+def test_cancel_query_rejects_invalid_pid(cancel_query_id: Any) -> None:
+    """cancel_query rejects non-integer cancel_query_id values."""
+    from superset.models.sql_lab import Query
+
+    query = Query()
+    cursor = MagicMock()
+
+    result = spec.cancel_query(cursor, query, cancel_query_id)
+
+    assert result is False
+    cursor.execute.assert_not_called()
+
+
+def test_cancel_query_returns_false_on_db_error() -> None:
+    """cancel_query returns False when the database raises an exception."""
+    from superset.models.sql_lab import Query
+
+    query = Query()
+    cursor = MagicMock()
+    cursor.execute.side_effect = Exception("connection lost")
+
+    result = spec.cancel_query(cursor, query, 123)
+
+    assert result is False
