@@ -202,6 +202,10 @@ class DatasetForbiddenDataURI(ImportFailedError):  # noqa: N818
     message = _("Data URI is not allowed.")
 
 
+class DatasetForbiddenDataURIScheme(ImportFailedError):  # noqa: N818
+    message = _("Data URI scheme is not allowed. Only http and https are supported.")
+
+
 class WarmUpCacheTableNotFoundError(CommandException):
     status = 404
     message = _("The provided table was not found in the provided database")

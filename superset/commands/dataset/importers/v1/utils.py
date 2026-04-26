@@ -19,6 +19,7 @@ import logging
 import re
 from typing import Any
 from urllib import request
+from urllib.parse import urlparse
 
 import pandas as pd
 from flask import current_app as app
@@ -27,7 +28,10 @@ from sqlalchemy.exc import MultipleResultsFound
 from sqlalchemy.sql.visitors import VisitableType
 
 from superset import db, security_manager
-from superset.commands.dataset.exceptions import DatasetForbiddenDataURI
+from superset.commands.dataset.exceptions import (
+    DatasetForbiddenDataURI,
+    DatasetForbiddenDataURIScheme,
+)
 from superset.commands.exceptions import ImportFailedError
 from superset.connectors.sqla.models import SqlaTable
 from superset.models.core import Database
@@ -205,6 +209,11 @@ def load_data(data_uri: str, dataset: SqlaTable, database: Database) -> None:
     data_uri = normalize_example_data_url(data_uri)
 
     validate_data_uri(data_uri)
+
+    parsed = urlparse(data_uri)
+    if parsed.scheme not in ("http", "https"):
+        raise DatasetForbiddenDataURIScheme()
+
     logger.info("Downloading data from %s", data_uri)
     data = request.urlopen(data_uri)  # pylint: disable=consider-using-with  # noqa: S310
     if data_uri.endswith(".gz"):
