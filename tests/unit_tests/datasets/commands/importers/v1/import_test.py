@@ -32,9 +32,11 @@ from sqlalchemy.orm.session import Session
 from superset import db, security_manager
 from superset.commands.dataset.exceptions import (
     DatasetForbiddenDataURI,
+    DatasetForbiddenDataURIScheme,
 )
 from superset.commands.dataset.importers.v1.utils import (
     import_dataset,
+    load_data,
     validate_data_uri,
 )
 from superset.commands.exceptions import ImportFailedError
@@ -783,3 +785,55 @@ def test_validate_data_uri(allowed_urls, data_uri, expected, exception_class):
     else:
         with pytest.raises(exception_class):
             validate_data_uri(data_uri)
+
+
+@pytest.mark.parametrize(
+    "data_uri",
+    [
+        "file:///etc/passwd",
+        "ftp://example.com/data.csv",
+        "data:text/csv;base64,abc",
+        "gopher://example.com/",
+    ],
+)
+@patch("superset.commands.dataset.importers.v1.utils.validate_data_uri")
+@patch("superset.examples.helpers.normalize_example_data_url", side_effect=lambda u: u)
+def test_load_data_rejects_forbidden_schemes(
+    mock_normalize: Mock,
+    mock_validate: Mock,
+    data_uri: str,
+) -> None:
+    with pytest.raises(DatasetForbiddenDataURIScheme):
+        load_data(data_uri, Mock(spec=SqlaTable), Mock(spec=Database))
+
+
+@pytest.mark.parametrize(
+    "data_uri",
+    [
+        "https://example.com/data.csv",
+        "http://example.com/data.csv",
+    ],
+)
+@patch("superset.commands.dataset.importers.v1.utils.validate_data_uri")
+@patch("superset.examples.helpers.normalize_example_data_url", side_effect=lambda u: u)
+@patch("superset.commands.dataset.importers.v1.utils.request.urlopen")
+def test_load_data_allows_http_schemes(
+    mock_urlopen: Mock,
+    mock_normalize: Mock,
+    mock_validate: Mock,
+    data_uri: str,
+) -> None:
+    """Verify that http/https URIs pass the scheme check (urlopen is reached)."""
+    mock_urlopen.return_value = io.BytesIO(b"col1,col2\na,1\n")
+    mock_dataset = Mock(spec=SqlaTable)
+    mock_dataset.columns = []
+    mock_database = Mock(spec=Database)
+    mock_database.sqlalchemy_uri = "different://uri"
+    mock_database.get_sqla_engine = Mock(
+        return_value=Mock(__enter__=Mock(), __exit__=Mock())
+    )
+    with patch("superset.commands.dataset.importers.v1.utils.pd.read_csv") as mock_csv:
+        mock_csv.return_value = Mock(spec=["to_sql", "items", "keys"])
+        mock_csv.return_value.items.return_value = []
+        load_data(data_uri, mock_dataset, mock_database)
+    mock_urlopen.assert_called_once_with(data_uri)
