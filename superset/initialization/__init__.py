@@ -20,6 +20,7 @@ import contextlib
 import logging
 import os
 import sys
+from pathlib import Path
 from typing import Any, Callable, TYPE_CHECKING
 
 import wtforms_json
@@ -581,11 +582,19 @@ class SupersetAppInitializer:  # pylint: disable=too-many-public-methods
             # present yet.
             return
 
+        # Build the allowlist of resolved LOCAL_EXTENSIONS dist paths so
+        # install_in_memory_importer can validate filesystem-based origins.
+        allowed_local_paths = [
+            str((Path(p) / "dist").resolve())
+            for p in self.superset_app.config.get("LOCAL_EXTENSIONS", [])
+        ]
+
         for extension in extensions.values():
             if backend_files := extension.backend:
                 install_in_memory_importer(
                     backend_files,
                     source_base_path=extension.source_base_path,
+                    allowed_local_paths=allowed_local_paths,
                 )
 
             backend = extension.manifest.backend
