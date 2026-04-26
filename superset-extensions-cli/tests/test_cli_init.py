@@ -529,3 +529,65 @@ def test_init_non_interactive_validates_technical_name(cli_runner, isolated_file
 
     assert result.exit_code == 1
     assert "must start with a letter" in result.output.lower()
+
+
+# Template autoescape tests (B701 remediation)
+@pytest.mark.unit
+def test_jinja_env_escapes_html_in_tsx_template():
+    """Test that HTML special characters are escaped in TSX template output."""
+    from jinja2 import Environment, FileSystemLoader, select_autoescape
+
+    templates_dir = Path(__file__).resolve().parent.parent / (
+        "src/superset_extensions_cli/templates"
+    )
+    env = Environment(
+        loader=FileSystemLoader(templates_dir),
+        autoescape=select_autoescape(
+            enabled_extensions=("html", "htm", "xml", "tsx.j2"),
+            default_for_string=False,
+            default=False,
+        ),
+    )
+    ctx = {
+        "id": "test-org.xss-ext",
+        "display_name": '<img src=x onerror="alert(1)">',
+    }
+    rendered = env.get_template("frontend/src/index.tsx.j2").render(ctx)
+
+    assert "&lt;" in rendered, "< should be escaped in TSX output"
+    assert "&gt;" in rendered, "> should be escaped in TSX output"
+    assert "&#34;" in rendered, '" should be escaped in TSX output'
+    assert '<img src=x onerror="alert(1)">' not in rendered, (
+        "Raw HTML must not appear in TSX output"
+    )
+
+
+@pytest.mark.unit
+def test_jinja_env_no_escape_in_json_template():
+    """Test that JSON templates are not HTML-escaped (would corrupt JSON)."""
+    from jinja2 import Environment, FileSystemLoader, select_autoescape
+
+    templates_dir = Path(__file__).resolve().parent.parent / (
+        "src/superset_extensions_cli/templates"
+    )
+    env = Environment(
+        loader=FileSystemLoader(templates_dir),
+        autoescape=select_autoescape(
+            enabled_extensions=("html", "htm", "xml", "tsx.j2"),
+            default_for_string=False,
+            default=False,
+        ),
+    )
+    ctx = {
+        "publisher": "test-org",
+        "name": "test-ext",
+        "display_name": "Ext & More <v2>",
+        "version": "0.1.0",
+        "license": "Apache-2.0",
+    }
+    rendered = env.get_template("extension.json.j2").render(ctx)
+
+    assert "Ext & More <v2>" in rendered, (
+        "JSON output must not HTML-escape special characters"
+    )
+    assert "&amp;" not in rendered, "JSON output must not contain HTML entities"

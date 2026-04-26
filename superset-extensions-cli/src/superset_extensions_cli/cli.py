@@ -27,7 +27,7 @@ from typing import Any, Callable
 
 import click
 import semver
-from jinja2 import Environment, FileSystemLoader
+from jinja2 import Environment, FileSystemLoader, select_autoescape
 from superset_core.extensions.types import (
     ExtensionConfig,
     Manifest,
@@ -831,7 +831,14 @@ def init(
 
     # Set up Jinja environment
     templates_dir = Path(__file__).parent / "templates"
-    env = Environment(loader=FileSystemLoader(templates_dir))  # noqa: S701
+    env = Environment(
+        loader=FileSystemLoader(templates_dir),
+        autoescape=select_autoescape(
+            enabled_extensions=("html", "htm", "xml", "tsx.j2"),
+            default_for_string=False,
+            default=False,
+        ),
+    )
     ctx = {
         **names,  # Include all name variants
         "include_frontend": include_frontend,
