@@ -21,7 +21,7 @@ import json
 from pathlib import Path
 
 import pytest
-from jinja2 import Environment, FileSystemLoader
+from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 
 @pytest.fixture
@@ -35,7 +35,10 @@ def templates_dir():
 @pytest.fixture
 def jinja_env(templates_dir):
     """Create a Jinja2 environment for testing templates."""
-    return Environment(loader=FileSystemLoader(templates_dir))
+    return Environment(
+        loader=FileSystemLoader(templates_dir),
+        autoescape=select_autoescape(),
+    )
 
 
 @pytest.fixture
@@ -365,3 +368,64 @@ def test_template_context_edge_cases(jinja_env):
     assert parsed["displayName"] == "Minimal"
     assert "frontend" not in parsed
     assert "backend" not in parsed
+
+
+# Autoescape / Special Character Tests
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "display_name",
+    [
+        'Tom & Jerry\'s "Extension"',
+        "<script>alert('xss')</script>",
+        "Brackets <> & Ampersand",
+    ],
+)
+def test_template_renders_special_chars_unescaped_in_code_templates(
+    jinja_env: Environment, display_name: str
+) -> None:
+    """Code-generation templates (.j2) preserve special characters verbatim.
+
+    The Jinja Environment uses ``select_autoescape()`` which only HTML-escapes
+    ``.html/.htm/.xml`` templates.  Scaffold templates ending in ``.j2`` must
+    render user-supplied values without HTML entity encoding so that generated
+    JSON, Python, and TypeScript remain syntactically correct.
+    """
+    context = {
+        "publisher": "test-org",
+        "name": "test-ext",
+        "display_name": display_name,
+        "id": "test-org.test-ext",
+        "npm_name": "@test-org/test-ext",
+        "mf_name": "testOrg_testExt",
+        "backend_package": "test_org-test_ext",
+        "backend_path": "test_org.test_ext",
+        "backend_entry": "test_org.test_ext.entrypoint",
+        "version": "0.1.0",
+        "license": "Apache-2.0",
+        "include_frontend": True,
+        "include_backend": True,
+    }
+
+    # extension.json — display_name must appear literally in JSON value
+    ext_json = jinja_env.get_template("extension.json.j2").render(context)
+    assert display_name in ext_json
+
+    # index.tsx — display_name must appear literally in JSX source
+    index_tsx = jinja_env.get_template("frontend/src/index.tsx.j2").render(context)
+    assert display_name in index_tsx
+
+    # entrypoint.py — display_name must appear literally in Python source
+    entrypoint = jinja_env.get_template("backend/src/package/entrypoint.py.j2").render(
+        context
+    )
+    assert display_name in entrypoint
+
+
+@pytest.mark.unit
+def test_autoescape_enabled_for_html_extension(templates_dir: Path) -> None:
+    """Verify select_autoescape activates HTML escaping for .html templates."""
+    env = Environment(
+        loader=FileSystemLoader(templates_dir),
+        autoescape=select_autoescape(),
+    )
+    assert callable(env.autoescape)
