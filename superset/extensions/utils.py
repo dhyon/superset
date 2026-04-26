@@ -38,6 +38,59 @@ logger = logging.getLogger(__name__)
 FRONTEND_REGEX = re.compile(r"^frontend/dist/([^/]+)$")
 BACKEND_REGEX = re.compile(r"^backend/src/(.+)$")
 
+# Allowed scheme for virtual extension paths loaded from .supx packages.
+_SUPX_SCHEME = "supx://"
+
+
+def _validate_source_base_path(source_base_path: str) -> None:
+    """Validate that *source_base_path* comes from a trusted origin.
+
+    Accepted origins:
+    * ``supx://<extension-id>`` – virtual path for extensions loaded from
+      administrator-managed .supx packages.
+    * An **absolute** filesystem path with no ``..`` components – used for
+      LOCAL_EXTENSIONS directories declared in the Superset configuration.
+
+    Raises ``ValueError`` for anything else so the loader fails closed.
+    """
+    if source_base_path.startswith(_SUPX_SCHEME):
+        ext_id = source_base_path[len(_SUPX_SCHEME) :]
+        if not ext_id or "/" in ext_id:
+            raise ValueError(f"Invalid supx:// extension path: {source_base_path!r}")
+        return
+
+    resolved = str(Path(source_base_path).resolve())
+    if not os.path.isabs(source_base_path) or ".." in Path(source_base_path).parts:
+        raise ValueError(
+            f"Extension source path must be absolute with no '..' components, "
+            f"got: {source_base_path!r}"
+        )
+    if resolved != str(Path(source_base_path)):
+        logger.warning(
+            "Extension source path resolves differently than provided: %s -> %s",
+            source_base_path,
+            resolved,
+        )
+
+
+def _validate_file_dict(file_dict: dict[str, bytes]) -> None:
+    """Reject file-dict keys that could escape the expected module tree.
+
+    Only relative ``.py`` paths without ``..`` components are accepted.
+    """
+    for rel_path in file_dict:
+        parts = Path(rel_path).parts
+        if os.path.isabs(rel_path):
+            raise ValueError(f"Extension file path must be relative, got: {rel_path!r}")
+        if ".." in parts:
+            raise ValueError(
+                f"Path traversal detected in extension file path: {rel_path!r}"
+            )
+        if not rel_path.endswith(".py"):
+            raise ValueError(
+                f"Only .py files are allowed in extension backend, got: {rel_path!r}"
+            )
+
 
 class InMemoryLoader(importlib.abc.Loader):
     def __init__(
@@ -55,7 +108,11 @@ class InMemoryLoader(importlib.abc.Loader):
         )
         if self.is_package:
             module.__path__ = []
-        # Compile with filename for proper tracebacks
+        # Compile with filename for proper tracebacks.
+        # Trust boundary: source bytes originate exclusively from admin-managed
+        # LOCAL_EXTENSIONS directories or signed .supx packages.  Both paths
+        # are validated by _validate_source_base_path / _validate_file_dict
+        # before reaching this point.
         code = compile(self.source, self.origin, "exec")
         exec(code, module.__dict__)  # noqa: S102
 
@@ -139,12 +196,24 @@ def install_in_memory_importer(
     """
     Install an in-memory module importer for extension backend code.
 
+    Both *source_base_path* and the keys of *file_dict* are validated
+    before any code is compiled or executed.  If either check fails the
+    function raises ``ValueError`` and no importer is installed.
+
     :param file_dict: Dictionary mapping relative file paths to their content
     :param source_base_path: Base path for traceback filenames. For LOCAL_EXTENSIONS,
         this should be an absolute filesystem path to the dist directory.
         For EXTENSIONS_PATH (.supx files), this should be a supx:// URL
         (e.g., "supx://extension-id").
+    :raises ValueError: If any path fails trust-boundary validation.
     """
+    _validate_source_base_path(source_base_path)
+    _validate_file_dict(file_dict)
+    logger.debug(
+        "Installing in-memory importer for source base path: %s (%d file(s))",
+        source_base_path,
+        len(file_dict),
+    )
     finder = InMemoryFinder(file_dict, source_base_path)
     sys.meta_path.insert(0, finder)
 
