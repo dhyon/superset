@@ -16,6 +16,7 @@
 # under the License.
 from __future__ import annotations
 
+import io
 import json
 import pickle
 from abc import ABC, abstractmethod
@@ -77,12 +78,56 @@ class JsonKeyValueCodec(KeyValueCodec):
             raise KeyValueCodecDecodeException(str(ex)) from ex
 
 
+_PICKLE_ALLOWED: dict[str, frozenset[str]] = {
+    "builtins": frozenset(
+        {
+            "True",
+            "False",
+            "None",
+            "bool",
+            "bytes",
+            "bytearray",
+            "complex",
+            "dict",
+            "float",
+            "frozenset",
+            "int",
+            "list",
+            "range",
+            "set",
+            "slice",
+            "str",
+            "tuple",
+        }
+    ),
+}
+
+
+class _RestrictedUnpickler(pickle.Unpickler):
+    """Unpickler that only allows safe built-in types.
+
+    Blocks arbitrary class instantiation during deserialization,
+    mitigating remote-code-execution via crafted pickle payloads
+    (Bandit B301).
+    """
+
+    def find_class(self, module: str, name: str) -> type:
+        allowed_names = _PICKLE_ALLOWED.get(module)
+        if allowed_names is not None and name in allowed_names:
+            return super().find_class(module, name)
+        raise pickle.UnpicklingError(f"Disallowed class reference: {module}.{name}")
+
+
+def _restricted_loads(data: bytes) -> Any:
+    return _RestrictedUnpickler(io.BytesIO(data)).load()
+
+
 class PickleKeyValueCodec(KeyValueCodec):
     def encode(self, value: dict[Any, Any]) -> bytes:
         return pickle.dumps(value)
 
     def decode(self, value: bytes) -> dict[Any, Any]:
-        return pickle.loads(value)  # noqa: S301
+        return _restricted_loads(value)
 
 
 class MarshmallowKeyValueCodec(JsonKeyValueCodec):

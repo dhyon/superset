@@ -14,6 +14,8 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+import os
+import pickle
 from contextlib import nullcontext
 from typing import Any
 
@@ -120,3 +122,52 @@ def test_pickle_codec(input_: Any, expected_result: Any):
     codec = PickleKeyValueCodec()
     encoded_value = codec.encode(input_)
     assert expected_result == codec.decode(encoded_value)
+
+
+def test_pickle_codec_rejects_arbitrary_class() -> None:
+    """Crafted payload referencing os.system must be rejected."""
+
+    class _Exploit:
+        def __reduce__(self) -> tuple[Any, ...]:
+            return (os.system, ("echo pwned",))
+
+    payload = pickle.dumps(_Exploit())
+    codec = PickleKeyValueCodec()
+    with pytest.raises(pickle.UnpicklingError, match="Disallowed class reference"):
+        codec.decode(payload)
+
+
+def test_pickle_codec_rejects_exec_payload() -> None:
+    """Payload using builtins.exec must be rejected."""
+
+    class _ExecExploit:
+        def __reduce__(self) -> tuple[Any, ...]:
+            return (exec, ("raise RuntimeError('pwned')",))
+
+    payload = pickle.dumps(_ExecExploit())
+    codec = PickleKeyValueCodec()
+    with pytest.raises(pickle.UnpicklingError, match="Disallowed class reference"):
+        codec.decode(payload)
+
+
+@pytest.mark.parametrize(
+    "safe_value",
+    [
+        {"key": "value"},
+        [1, 2, 3],
+        (1, "two", 3.0),
+        {1, 2, 3},
+        frozenset({4, 5}),
+        complex(1, 2),
+        42,
+        3.14,
+        True,
+        None,
+        b"raw bytes",
+        "plain string",
+    ],
+)
+def test_pickle_codec_allows_safe_builtins(safe_value: Any) -> None:
+    codec = PickleKeyValueCodec()
+    encoded = codec.encode(safe_value)
+    assert codec.decode(encoded) == safe_value
