@@ -16,6 +16,7 @@
 # under the License.
 from __future__ import annotations
 
+import io
 import json
 import pickle
 from abc import ABC, abstractmethod
@@ -77,12 +78,31 @@ class JsonKeyValueCodec(KeyValueCodec):
             raise KeyValueCodecDecodeException(str(ex)) from ex
 
 
+class _RestrictedUnpickler(pickle.Unpickler):
+    """Unpickler that only allows safe built-in types."""
+
+    _ALLOWED_CLASSES: frozenset[tuple[str, str]] = frozenset(
+        {
+            ("builtins", "complex"),
+            ("builtins", "frozenset"),
+            ("builtins", "set"),
+        }
+    )
+
+    def find_class(self, module: str, name: str) -> type:
+        if (module, name) in self._ALLOWED_CLASSES:
+            return super().find_class(module, name)
+        raise pickle.UnpicklingError(
+            f"Deserialization of {module}.{name} is not allowed"
+        )
+
+
 class PickleKeyValueCodec(KeyValueCodec):
     def encode(self, value: dict[Any, Any]) -> bytes:
         return pickle.dumps(value)
 
     def decode(self, value: bytes) -> dict[Any, Any]:
-        return pickle.loads(value)  # noqa: S301
+        return _RestrictedUnpickler(io.BytesIO(value)).load()
 
 
 class MarshmallowKeyValueCodec(JsonKeyValueCodec):

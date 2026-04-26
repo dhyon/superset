@@ -14,6 +14,7 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+import pickle
 from contextlib import nullcontext
 from typing import Any
 
@@ -120,3 +121,53 @@ def test_pickle_codec(input_: Any, expected_result: Any):
     codec = PickleKeyValueCodec()
     encoded_value = codec.encode(input_)
     assert expected_result == codec.decode(encoded_value)
+
+
+@pytest.mark.parametrize(
+    "input_",
+    [
+        {"foo": "bar"},
+        [1, 2, 3],
+        "plain string",
+        42,
+        3.14,
+        True,
+        None,
+        (1, "two", 3.0),
+        {1, 2, 3},
+        frozenset([4, 5]),
+        complex(1, 2),
+    ],
+)
+def test_pickle_codec_allows_safe_builtins(input_: Any) -> None:
+    codec = PickleKeyValueCodec()
+    encoded = codec.encode(input_)
+    assert codec.decode(encoded) == input_
+
+
+def test_pickle_codec_rejects_arbitrary_class() -> None:
+    """Crafted payload referencing os.system must be rejected."""
+    import os
+
+    class Evil:
+        def __reduce__(self):
+            return (os.system, ("true",))
+
+    malicious_bytes = pickle.dumps(Evil())
+    codec = PickleKeyValueCodec()
+    with pytest.raises(pickle.UnpicklingError, match="not allowed"):
+        codec.decode(malicious_bytes)
+
+
+def test_pickle_codec_rejects_subprocess() -> None:
+    """Payload referencing subprocess.Popen must be rejected."""
+    import subprocess
+
+    class Malicious:
+        def __reduce__(self):
+            return (subprocess.Popen, (["echo", "pwned"],))
+
+    malicious_bytes = pickle.dumps(Malicious())
+    codec = PickleKeyValueCodec()
+    with pytest.raises(pickle.UnpicklingError, match="not allowed"):
+        codec.decode(malicious_bytes)
