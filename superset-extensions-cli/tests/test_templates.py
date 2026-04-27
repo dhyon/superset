@@ -21,7 +21,7 @@ import json
 from pathlib import Path
 
 import pytest
-from jinja2 import Environment, FileSystemLoader
+from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 
 @pytest.fixture
@@ -35,7 +35,10 @@ def templates_dir():
 @pytest.fixture
 def jinja_env(templates_dir):
     """Create a Jinja2 environment for testing templates."""
-    return Environment(loader=FileSystemLoader(templates_dir))
+    return Environment(
+        loader=FileSystemLoader(templates_dir),
+        autoescape=select_autoescape(),
+    )
 
 
 @pytest.fixture
@@ -365,3 +368,56 @@ def test_template_context_edge_cases(jinja_env):
     assert parsed["displayName"] == "Minimal"
     assert "frontend" not in parsed
     assert "backend" not in parsed
+
+
+# Autoescape Behavior Tests
+@pytest.mark.unit
+def test_autoescape_preserves_special_chars_in_code_templates(jinja_env):
+    """Code-generation templates (.j2) must pass through HTML-special characters
+    unescaped so the generated source files remain valid."""
+    context = {
+        "publisher": "acme",
+        "name": "test-ext",
+        "display_name": 'Foo <b>"Bar"</b> & Baz',
+        "id": "acme.test-ext",
+        "npm_name": "@acme/test-ext",
+        "mf_name": "acme_testExt",
+        "backend_package": "acme-test_ext",
+        "backend_path": "acme.test_ext",
+        "backend_entry": "acme.test_ext.entrypoint",
+        "version": "0.1.0",
+        "license": "Apache-2.0",
+        "include_frontend": True,
+        "include_backend": True,
+    }
+
+    # extension.json — display_name should appear verbatim (unescaped)
+    rendered_json = jinja_env.get_template("extension.json.j2").render(context)
+    assert '"Foo <b>\\"Bar\\"</b> & Baz"' in rendered_json or (
+        context["display_name"] in rendered_json
+    )
+
+    # frontend index.tsx — JSX template must keep raw HTML chars
+    rendered_tsx = jinja_env.get_template("frontend/src/index.tsx.j2").render(context)
+    assert "<b>" in rendered_tsx
+    assert "&amp;" not in rendered_tsx
+    assert "&" in rendered_tsx
+
+    # backend entrypoint.py — print statement must keep raw chars
+    rendered_py = jinja_env.get_template("backend/src/package/entrypoint.py.j2").render(
+        context
+    )
+    assert "<b>" in rendered_py
+    assert "&amp;" not in rendered_py
+
+
+@pytest.mark.unit
+def test_autoescape_configured_on_environment(templates_dir):
+    """Verify the Jinja Environment has autoescape explicitly configured."""
+    env = Environment(
+        loader=FileSystemLoader(templates_dir),
+        autoescape=select_autoescape(),
+    )
+    # select_autoescape enables escaping for .html/.htm/.xml by default
+    assert env.autoescape is not False
+    assert callable(env.autoescape)
