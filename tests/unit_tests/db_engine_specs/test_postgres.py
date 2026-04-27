@@ -31,6 +31,7 @@ from superset.db_engine_specs.postgres import (
     PostgresEngineSpec as spec,  # noqa: N813
 )
 from superset.exceptions import SupersetSecurityException
+from superset.models.sql_lab import Query
 from superset.sql.parse import Table
 from superset.utils.core import GenericDataType
 from tests.unit_tests.db_engine_specs.utils import (
@@ -363,3 +364,46 @@ class TestRedshiftDetection:
         spec.update_params_from_encrypted_extra(database, params)
 
         assert "pool_events" not in params
+
+
+def test_cancel_query_with_valid_int_pid() -> None:
+    """cancel_query uses parameterized SQL for a valid integer PID."""
+    cursor = MagicMock()
+    query = Query()
+    assert spec.cancel_query(cursor, query, "12345") is True
+    cursor.execute.assert_called_once_with(
+        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE pid=%s",
+        (12345,),
+    )
+
+
+def test_cancel_query_rejects_non_numeric_pid() -> None:
+    """cancel_query returns False for non-numeric cancel_query_id values."""
+    cursor = MagicMock()
+    query = Query()
+    assert spec.cancel_query(cursor, query, "not_a_pid") is False
+    cursor.execute.assert_not_called()
+
+
+def test_cancel_query_rejects_sql_injection_attempt() -> None:
+    """cancel_query returns False when cancel_query_id contains SQL injection."""
+    cursor = MagicMock()
+    query = Query()
+    assert spec.cancel_query(cursor, query, "1; DROP TABLE users--") is False
+    cursor.execute.assert_not_called()
+
+
+def test_cancel_query_rejects_empty_string() -> None:
+    """cancel_query returns False for an empty cancel_query_id."""
+    cursor = MagicMock()
+    query = Query()
+    assert spec.cancel_query(cursor, query, "") is False
+    cursor.execute.assert_not_called()
+
+
+def test_cancel_query_handles_cursor_exception() -> None:
+    """cancel_query returns False when the database raises an exception."""
+    cursor = MagicMock()
+    cursor.execute.side_effect = Exception("connection lost")
+    query = Query()
+    assert spec.cancel_query(cursor, query, "999") is False
