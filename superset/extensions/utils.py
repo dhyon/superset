@@ -83,7 +83,8 @@ def _validate_source_base_path(source_base_path: str) -> None:
 
     # Guard against symlink escapes: the resolved path must still be
     # rooted under the same directory tree as the original.
-    if not str(resolved).startswith(str(path.parent.resolve(strict=False))):
+    parent_resolved = path.parent.resolve(strict=False)
+    if not resolved.is_relative_to(parent_resolved):
         raise UntrustedExtensionOriginError(
             f"Extension source path resolves outside its parent tree: "
             f"{source_base_path} -> {resolved}"

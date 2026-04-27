@@ -15,7 +15,9 @@
 # specific language governing permissions and limitations
 # under the License.
 
+import sys
 import types
+from collections.abc import Iterator
 
 import pytest
 
@@ -25,6 +27,15 @@ from superset.extensions.utils import (
     install_in_memory_importer,
     UntrustedExtensionOriginError,
 )
+
+
+@pytest.fixture(autouse=True)
+def _clean_meta_path() -> Iterator[None]:
+    """Restore sys.meta_path after each test to prevent InMemoryFinder leaks."""
+    original = sys.meta_path.copy()
+    yield
+    sys.meta_path[:] = original
+
 
 # ---------------------------------------------------------------------------
 # _validate_source_base_path
@@ -90,10 +101,14 @@ class TestInstallInMemoryImporter:
             install_in_memory_importer({}, "relative/bad")
 
     def test_accepts_supx_scheme(self) -> None:
+        original_len = len(sys.meta_path)
         install_in_memory_importer({}, "supx://good-ext")
+        assert len(sys.meta_path) == original_len + 1
 
     def test_accepts_absolute_path(self) -> None:
+        original_len = len(sys.meta_path)
         install_in_memory_importer({}, "/opt/extensions/good-ext/dist")
+        assert len(sys.meta_path) == original_len + 1
 
 
 # ---------------------------------------------------------------------------
