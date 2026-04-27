@@ -204,3 +204,86 @@ def test_load_examples_from_configs_defaults(
         force_data=False,
     )
     mock_command.run.assert_called_once()
+
+
+@patch("superset.examples.utils.ImportExamplesCommand")
+def test_load_configs_from_directory_parses_valid_metadata(
+    mock_command_cls: MagicMock,
+) -> None:
+    """load_configs_from_directory() must parse metadata.yaml with safe YAML loading.
+
+    Verifies that valid metadata with a "type" key is parsed correctly and the
+    "type" key is stripped before forwarding to ImportExamplesCommand.
+    """
+    from superset.examples.utils import load_configs_from_directory
+
+    mock_command = MagicMock()
+    mock_command_cls.return_value = mock_command
+
+    with TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        (root / "metadata.yaml").write_text(
+            "version: 1.0.0\ntype: dashboard\ntimestamp: '2020-01-01T00:00:00+00:00'\n"
+        )
+        (root / "dashboards").mkdir()
+        (root / "dashboards" / "my_dash.yaml").write_text("dashboard_title: Test\n")
+
+        load_configs_from_directory(root)
+
+    call_args = mock_command_cls.call_args
+    contents = call_args[0][0]
+
+    # "type" must be stripped from the metadata
+    roundtripped = yaml.safe_load(contents["metadata.yaml"])
+    assert "type" not in roundtripped
+    assert roundtripped["version"] == "1.0.0"
+    assert roundtripped["timestamp"] == "2020-01-01T00:00:00+00:00"
+
+    # YAML content files should be present
+    assert "dashboards/my_dash.yaml" in contents
+
+
+@patch("superset.examples.utils.ImportExamplesCommand")
+def test_load_configs_from_directory_handles_empty_metadata(
+    mock_command_cls: MagicMock,
+) -> None:
+    """When metadata.yaml is absent, load_configs_from_directory() defaults to '{}'.
+
+    This must not raise an error; the resulting metadata should be an empty dict.
+    """
+    from superset.examples.utils import load_configs_from_directory
+
+    mock_command = MagicMock()
+    mock_command_cls.return_value = mock_command
+
+    with TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        (root / "databases").mkdir()
+        (root / "databases" / "db.yaml").write_text("database_name: test\n")
+
+        load_configs_from_directory(root)
+
+    call_args = mock_command_cls.call_args
+    contents = call_args[0][0]
+    roundtripped = yaml.safe_load(contents["metadata.yaml"])
+    assert roundtripped == {}
+
+
+@patch("superset.examples.utils.ImportExamplesCommand")
+def test_load_configs_from_directory_malformed_yaml_raises(
+    mock_command_cls: MagicMock,
+) -> None:
+    """Malformed YAML in metadata.yaml must raise a yaml.YAMLError.
+
+    This confirms the safe error behavior is preserved after switching loaders.
+    """
+    import pytest
+
+    from superset.examples.utils import load_configs_from_directory
+
+    with TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        (root / "metadata.yaml").write_text("{{invalid yaml: [unterminated")
+
+        with pytest.raises(yaml.YAMLError):
+            load_configs_from_directory(root)
