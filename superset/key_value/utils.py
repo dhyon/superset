@@ -69,8 +69,14 @@ def decode_permalink_id(key: str, salt: str) -> int:
 
 
 def _uuid_namespace_from_md5(seed: str) -> UUID:
-    """Generate UUID namespace from MD5 hash (legacy compatibility)."""
-    md5_obj = md5()  # noqa: S324
+    """Generate UUID namespace from MD5 hash (legacy compatibility).
+
+    MD5 is used here solely for deterministic namespace generation,
+    not for any security purpose (e.g., password hashing or integrity).
+    The usedforsecurity=False flag communicates this to the runtime and
+    allows operation in FIPS-compliant environments.
+    """
+    md5_obj = md5(usedforsecurity=False)
     md5_obj.update(seed.encode("utf-8"))
     return UUID(md5_obj.hexdigest())
 

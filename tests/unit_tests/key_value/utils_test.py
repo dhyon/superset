@@ -16,7 +16,7 @@
 # under the License.
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from uuid import UUID
 
 import pytest
@@ -185,3 +185,31 @@ def test_get_fallback_algorithms_default() -> None:
     fallbacks = get_fallback_algorithms(app=mock_app)
 
     assert fallbacks == []
+
+
+def test_md5_namespace_uses_usedforsecurity_false() -> None:
+    """Test that MD5 namespace generation passes usedforsecurity=False.
+
+    The MD5 hash in _uuid_namespace_from_md5 is used solely for
+    deterministic UUID namespace generation (legacy compatibility),
+    not for security. The usedforsecurity=False flag satisfies
+    Bandit B324 and enables FIPS-compliant environments.
+    """
+    from superset.key_value.utils import _uuid_namespace_from_md5
+
+    with patch("superset.key_value.utils.md5") as mock_md5:
+        mock_hash = MagicMock()
+        mock_hash.hexdigest.return_value = "d81a8c4d65229513525d6a5cef1c7c9d"
+        mock_md5.return_value = mock_hash
+
+        _uuid_namespace_from_md5("test_seed")
+
+        mock_md5.assert_called_once_with(usedforsecurity=False)
+
+
+def test_md5_namespace_output_stable_after_fix() -> None:
+    """Verify MD5 namespace output is unchanged after adding usedforsecurity=False."""
+    from superset.key_value.utils import _uuid_namespace_from_md5
+
+    result = _uuid_namespace_from_md5("test_seed")
+    assert result == UUID("d81a8c4d-6522-9513-525d-6a5cef1c7c9d")
