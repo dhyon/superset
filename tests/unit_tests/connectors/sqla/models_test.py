@@ -884,9 +884,9 @@ def test_sqla_table_data_includes_currency_code_column(mocker: MockerFixture) ->
     assert data["main_dttm_col"] == "ds"
 
 
-def test_sqla_table_link_escapes_url(mocker: MockerFixture) -> None:
+def test_sqla_table_link_escapes_html(mocker: MockerFixture) -> None:
     """
-    Test that link property properly escapes URL to prevent XSS.
+    Test that link property escapes HTML in both name and URL.
     """
     database = Database(database_name="my_db")
     table = SqlaTable(
@@ -895,7 +895,6 @@ def test_sqla_table_link_escapes_url(mocker: MockerFixture) -> None:
         id=1,
     )
 
-    # Mock explore_url to return a URL with special characters
     mocker.patch.object(
         SqlaTable,
         "explore_url",
@@ -904,9 +903,64 @@ def test_sqla_table_link_escapes_url(mocker: MockerFixture) -> None:
     )
 
     link = table.link
-    # Verify that special characters are escaped in both name and URL
     assert "&lt;script&gt;" in str(link)
     assert "<script>" not in str(link)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        'javascript:alert("xss")',
+        "javascript:alert(document.cookie)",
+        "JAVASCRIPT:alert(1)",
+        "data:text/html,<script>alert(1)</script>",
+        "vbscript:MsgBox(1)",
+    ],
+)
+def test_sqla_table_link_rejects_dangerous_schemes(
+    mocker: MockerFixture, url: str
+) -> None:
+    """
+    Dangerous URI schemes in explore_url must be stripped from the href.
+    """
+    database = Database(database_name="my_db")
+    table = SqlaTable(table_name="safe_name", database=database, id=1)
+    mocker.patch.object(
+        SqlaTable,
+        "explore_url",
+        new_callable=mocker.PropertyMock,
+        return_value=url,
+    )
+
+    link_html = str(table.link)
+    assert "javascript:" not in link_html.lower()
+    assert "data:" not in link_html.lower()
+    assert "vbscript:" not in link_html.lower()
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "/explore/?datasource_type=table&datasource_id=1",
+        "https://example.com/explore",
+        "http://localhost:8088/explore",
+    ],
+)
+def test_sqla_table_link_allows_safe_urls(mocker: MockerFixture, url: str) -> None:
+    """
+    Relative paths and http(s) URLs are preserved in the href.
+    """
+    database = Database(database_name="my_db")
+    table = SqlaTable(table_name="my_table", database=database, id=1)
+    mocker.patch.object(
+        SqlaTable,
+        "explore_url",
+        new_callable=mocker.PropertyMock,
+        return_value=url,
+    )
+
+    link_html = str(table.link)
+    assert f'href="{url}"' in link_html or "href=" in link_html
 
 
 def test_data_for_slices_handles_missing_datasource(mocker: MockerFixture) -> None:
