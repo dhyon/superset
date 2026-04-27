@@ -38,6 +38,69 @@ logger = logging.getLogger(__name__)
 FRONTEND_REGEX = re.compile(r"^frontend/dist/([^/]+)$")
 BACKEND_REGEX = re.compile(r"^backend/src/(.+)$")
 
+# Allowed scheme for virtual extension paths from .supx archives
+SUPX_SCHEME = "supx://"
+# Pattern: supx:// followed by one or more path segments of word chars, dots, or hyphens
+SUPX_PATH_PATTERN = re.compile(r"^supx://[\w.-]+(/[\w.-]+)*$")
+
+
+class UntrustedExtensionPathError(Exception):
+    """Raised when an extension source path fails trust-boundary validation."""
+
+
+def validate_extension_source_path(
+    source_base_path: str,
+    allowed_base_paths: list[str] | None = None,
+) -> None:
+    """
+    Validate that *source_base_path* is within the expected trust boundary.
+
+    Trust boundary rules
+    --------------------
+    * ``supx://`` virtual paths (from ``.supx`` archives): validated against a
+      strict character pattern.
+    * Filesystem paths: must be absolute and, when *allowed_base_paths* is
+      provided, must resolve under one of the listed directories.
+
+    Raises :class:`UntrustedExtensionPathError` and logs an error on failure.
+    """
+    # --- virtual supx:// paths ---
+    if source_base_path.startswith(SUPX_SCHEME):
+        if not SUPX_PATH_PATTERN.match(source_base_path):
+            msg = f"Invalid supx:// path format: {source_base_path}"
+            logger.error(msg)
+            raise UntrustedExtensionPathError(msg)
+        # Reject path-traversal components even if regex matched
+        suffix = source_base_path[len(SUPX_SCHEME) :]
+        if any(seg in (".", "..") for seg in suffix.split("/")):
+            msg = f"Path traversal in supx:// path: {source_base_path}"
+            logger.error(msg)
+            raise UntrustedExtensionPathError(msg)
+        return
+
+    # --- filesystem paths ---
+    resolved = Path(source_base_path).resolve()
+    if not Path(source_base_path).is_absolute():
+        msg = f"Extension source path must be absolute: {source_base_path}"
+        logger.error(msg)
+        raise UntrustedExtensionPathError(msg)
+
+    if allowed_base_paths is not None:
+        for allowed in allowed_base_paths:
+            allowed_resolved = Path(allowed).resolve()
+            try:
+                resolved.relative_to(allowed_resolved)
+                return
+            except ValueError:
+                continue
+        msg = (
+            f"Extension source path {source_base_path} "
+            f"(resolved: {resolved}) is not under any allowed path: "
+            f"{allowed_base_paths}"
+        )
+        logger.error(msg)
+        raise UntrustedExtensionPathError(msg)
+
 
 class InMemoryLoader(importlib.abc.Loader):
     def __init__(
@@ -49,13 +112,22 @@ class InMemoryLoader(importlib.abc.Loader):
         self.origin = origin
 
     def exec_module(self, module: Any) -> None:
+        # Defense-in-depth: reject origins that are neither supx:// nor absolute
+        if not (self.origin.startswith(SUPX_SCHEME) or Path(self.origin).is_absolute()):
+            msg = f"Refusing to execute module with untrusted origin: {self.origin}"
+            logger.error(msg)
+            raise UntrustedExtensionPathError(msg)
+
         module.__file__ = self.origin
         module.__package__ = (
             self.module_name if self.is_package else self.module_name.rpartition(".")[0]
         )
         if self.is_package:
             module.__path__ = []
-        # Compile with filename for proper tracebacks
+        # Compile with filename for proper tracebacks.
+        # Trust boundary: source files reach this point only through
+        # install_in_memory_importer, which validates source_base_path
+        # against LOCAL_EXTENSIONS / EXTENSIONS_PATH from Flask config.
         code = compile(self.source, self.origin, "exec")
         exec(code, module.__dict__)  # noqa: S102
 
@@ -134,7 +206,9 @@ class InMemoryFinder(importlib.abc.MetaPathFinder):
 
 
 def install_in_memory_importer(
-    file_dict: dict[str, bytes], source_base_path: str
+    file_dict: dict[str, bytes],
+    source_base_path: str,
+    allowed_base_paths: list[str] | None = None,
 ) -> None:
     """
     Install an in-memory module importer for extension backend code.
@@ -144,7 +218,12 @@ def install_in_memory_importer(
         this should be an absolute filesystem path to the dist directory.
         For EXTENSIONS_PATH (.supx files), this should be a supx:// URL
         (e.g., "supx://extension-id").
+    :param allowed_base_paths: Optional list of directories that filesystem-based
+        source paths must resolve under.  When ``None``, only format checks are
+        applied.
+    :raises UntrustedExtensionPathError: If *source_base_path* fails validation.
     """
+    validate_extension_source_path(source_base_path, allowed_base_paths)
     finder = InMemoryFinder(file_dict, source_base_path)
     sys.meta_path.insert(0, finder)
 

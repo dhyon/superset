@@ -581,11 +581,21 @@ class SupersetAppInitializer:  # pylint: disable=too-many-public-methods
             # present yet.
             return
 
+        # Build an allowlist of directories from which filesystem-based
+        # extension sources are permitted.  supx:// paths are validated
+        # by format only.
+        allowed_base_paths: list[str] = list(
+            current_app.config.get("LOCAL_EXTENSIONS", [])
+        )
+        if ext_path := current_app.config.get("EXTENSIONS_PATH"):
+            allowed_base_paths.append(ext_path)
+
         for extension in extensions.values():
             if backend_files := extension.backend:
                 install_in_memory_importer(
                     backend_files,
                     source_base_path=extension.source_base_path,
+                    allowed_base_paths=allowed_base_paths or None,
                 )
 
             backend = extension.manifest.backend
