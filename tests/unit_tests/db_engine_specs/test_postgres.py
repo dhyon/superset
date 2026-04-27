@@ -31,6 +31,7 @@ from superset.db_engine_specs.postgres import (
     PostgresEngineSpec as spec,  # noqa: N813
 )
 from superset.exceptions import SupersetSecurityException
+from superset.models.sql_lab import Query
 from superset.sql.parse import Table
 from superset.utils.core import GenericDataType
 from tests.unit_tests.db_engine_specs.utils import (
@@ -363,3 +364,41 @@ class TestRedshiftDetection:
         spec.update_params_from_encrypted_extra(database, params)
 
         assert "pool_events" not in params
+
+
+def test_cancel_query_success() -> None:
+    """cancel_query uses parameterized SQL with a valid integer PID."""
+    cursor = MagicMock()
+    query = Query()
+    assert spec.cancel_query(cursor, query, "12345") is True
+    cursor.execute.assert_called_once_with(
+        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE pid=%s",
+        (12345,),
+    )
+
+
+def test_cancel_query_exception() -> None:
+    """cancel_query returns False when the database raises an exception."""
+    cursor = MagicMock()
+    cursor.execute.side_effect = Exception("connection lost")
+    query = Query()
+    assert spec.cancel_query(cursor, query, "12345") is False
+
+
+@pytest.mark.parametrize(
+    "bad_id",
+    [
+        "not_a_number",
+        "1; DROP TABLE users",
+        "12345' OR '1'='1",
+        "",
+        "12.34",
+        None,
+    ],
+)
+def test_cancel_query_rejects_invalid_ids(bad_id: Any) -> None:
+    """cancel_query rejects non-integer cancel_query_id values."""
+    cursor = MagicMock()
+    query = Query()
+    assert spec.cancel_query(cursor, query, bad_id) is False
+    cursor.execute.assert_not_called()
