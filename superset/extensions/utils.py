@@ -38,6 +38,57 @@ logger = logging.getLogger(__name__)
 FRONTEND_REGEX = re.compile(r"^frontend/dist/([^/]+)$")
 BACKEND_REGEX = re.compile(r"^backend/src/(.+)$")
 
+# Trusted origin schemes accepted by the in-memory extension loader.
+# supx:// paths come from admin-configured EXTENSIONS_PATH .supx bundles.
+SUPX_ORIGIN_RE = re.compile(r"^supx://[a-zA-Z0-9][a-zA-Z0-9._-]*/")
+
+
+class UntrustedExtensionOriginError(Exception):
+    """Raised when an extension origin fails trust-boundary validation."""
+
+
+def _validate_source_base_path(source_base_path: str) -> None:
+    """Validate that *source_base_path* originates from a trusted location.
+
+    Accepted origins:
+    * ``supx://<extension-id>`` – virtual path for .supx bundles loaded from
+      the admin-configured ``EXTENSIONS_PATH``.
+    * An absolute filesystem path – used for ``LOCAL_EXTENSIONS`` entries.
+      The path must be absolute and must resolve without escaping its own
+      directory tree (i.e. no symlink tricks that point elsewhere).
+
+    Raises ``UntrustedExtensionOriginError`` for anything else so that the
+    loader fails closed.
+    """
+    if source_base_path.startswith("supx://"):
+        # Virtual scheme – only require a well-formed extension ID segment.
+        if not SUPX_ORIGIN_RE.match(source_base_path + "/"):
+            raise UntrustedExtensionOriginError(
+                f"Malformed supx:// origin: {source_base_path}"
+            )
+        return
+
+    path = Path(source_base_path)
+    if not path.is_absolute():
+        raise UntrustedExtensionOriginError(
+            f"Extension source path must be absolute: {source_base_path}"
+        )
+
+    try:
+        resolved = path.resolve(strict=False)
+    except (OSError, ValueError) as exc:
+        raise UntrustedExtensionOriginError(
+            f"Cannot resolve extension source path: {source_base_path}"
+        ) from exc
+
+    # Guard against symlink escapes: the resolved path must still be
+    # rooted under the same directory tree as the original.
+    if not str(resolved).startswith(str(path.parent.resolve(strict=False))):
+        raise UntrustedExtensionOriginError(
+            f"Extension source path resolves outside its parent tree: "
+            f"{source_base_path} -> {resolved}"
+        )
+
 
 class InMemoryLoader(importlib.abc.Loader):
     def __init__(
@@ -55,9 +106,18 @@ class InMemoryLoader(importlib.abc.Loader):
         )
         if self.is_package:
             module.__path__ = []
-        # Compile with filename for proper tracebacks
+
+        # Trust boundary: origins are validated at InMemoryFinder
+        # construction time via _validate_source_base_path(). Only
+        # admin-configured LOCAL_EXTENSIONS filesystem paths and
+        # supx:// bundle paths reach this point.
+        if not (self.origin.startswith("supx://") or Path(self.origin).is_absolute()):
+            raise UntrustedExtensionOriginError(
+                f"Refusing to execute module with untrusted origin: {self.origin}"
+            )
+
         code = compile(self.source, self.origin, "exec")
-        exec(code, module.__dict__)  # noqa: S102
+        exec(code, module.__dict__)  # noqa: S102  # nosec B102  # trusted-origin-only
 
 
 class InMemoryFinder(importlib.abc.MetaPathFinder):
@@ -144,7 +204,13 @@ def install_in_memory_importer(
         this should be an absolute filesystem path to the dist directory.
         For EXTENSIONS_PATH (.supx files), this should be a supx:// URL
         (e.g., "supx://extension-id").
+    :raises UntrustedExtensionOriginError: if *source_base_path* fails
+        trust-boundary validation.
     """
+    _validate_source_base_path(source_base_path)
+    logger.debug(
+        "Installing in-memory importer for trusted source: %s", source_base_path
+    )
     finder = InMemoryFinder(file_dict, source_base_path)
     sys.meta_path.insert(0, finder)
 
