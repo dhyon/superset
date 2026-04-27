@@ -20,6 +20,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import MagicMock, patch
 
+import pytest
 import yaml
 
 
@@ -204,3 +205,73 @@ def test_load_examples_from_configs_defaults(
         force_data=False,
     )
     mock_command.run.assert_called_once()
+
+
+@patch("superset.examples.utils.ImportExamplesCommand")
+def test_load_configs_from_directory_parses_valid_metadata(mock_command_cls):
+    """Metadata with a 'type' key should be parsed and have 'type' removed."""
+    from superset.examples.utils import load_configs_from_directory
+
+    mock_command = MagicMock()
+    mock_command_cls.return_value = mock_command
+
+    with TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        (root / "metadata.yaml").write_text(
+            yaml.dump({"version": "1.0.0", "type": "Dashboard"})
+        )
+        load_configs_from_directory(root)
+
+    call_args = mock_command_cls.call_args
+    contents = call_args[0][0]
+    parsed = yaml.safe_load(contents["metadata.yaml"])
+    assert "type" not in parsed
+    assert parsed["version"] == "1.0.0"
+
+
+@patch("superset.examples.utils.ImportExamplesCommand")
+def test_load_configs_from_directory_handles_empty_metadata(mock_command_cls):
+    """When no metadata.yaml exists, a default empty dict should be used."""
+    from superset.examples.utils import load_configs_from_directory
+
+    mock_command = MagicMock()
+    mock_command_cls.return_value = mock_command
+
+    with TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        (root / "chart.yaml").write_text("slice_name: test\n")
+        load_configs_from_directory(root)
+
+    call_args = mock_command_cls.call_args
+    contents = call_args[0][0]
+    parsed = yaml.safe_load(contents["metadata.yaml"])
+    assert parsed == {}
+
+
+@patch("superset.examples.utils.ImportExamplesCommand")
+def test_load_configs_from_directory_malformed_yaml_raises(mock_command_cls):
+    """Malformed YAML in metadata.yaml should raise a scanner error."""
+    from superset.examples.utils import load_configs_from_directory
+
+    with TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        (root / "metadata.yaml").write_text("{{invalid yaml: [")
+        with pytest.raises(yaml.YAMLError):
+            load_configs_from_directory(root)
+
+
+@patch("superset.examples.utils.ImportExamplesCommand")
+def test_load_configs_from_directory_uses_safe_load(mock_command_cls):
+    """Ensure yaml.safe_load is used, rejecting Python-specific YAML tags."""
+    from superset.examples.utils import load_configs_from_directory
+
+    mock_command = MagicMock()
+    mock_command_cls.return_value = mock_command
+
+    with TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        (root / "metadata.yaml").write_text(
+            "!!python/object/new:os.system ['echo pwned']"
+        )
+        with pytest.raises(yaml.YAMLError):
+            load_configs_from_directory(root)
