@@ -156,6 +156,32 @@ def test_get_deterministic_uuid_different_algorithms() -> None:
     assert uuid_md5 != uuid_sha256
 
 
+def test_md5_namespace_uses_usedforsecurity_false() -> None:
+    """Test that MD5 namespace generation calls md5 with usedforsecurity=False."""
+    from unittest.mock import patch
+
+    from superset.key_value.utils import _uuid_namespace_from_md5
+
+    with patch("superset.key_value.utils.md5") as mock_md5:
+        mock_md5.return_value.hexdigest.return_value = (
+            "d81a8c4d65229513525d6a5cef1c7c9d"
+        )
+        _uuid_namespace_from_md5("test_seed")
+        mock_md5.assert_called_once_with(b"test_seed", usedforsecurity=False)
+
+
+def test_md5_namespace_stable_output() -> None:
+    """Verify MD5 namespace output remains stable after usedforsecurity refactor."""
+    from superset.key_value.utils import _uuid_namespace_from_md5
+
+    assert _uuid_namespace_from_md5("test_seed") == UUID(
+        "d81a8c4d-6522-9513-525d-6a5cef1c7c9d"
+    )
+    assert _uuid_namespace_from_md5("superset") == UUID(
+        "31e135d2-5d77-58ce-d181-3b910fc201a5"
+    )
+
+
 @pytest.mark.parametrize(
     "config_value,expected_fallbacks",
     [
