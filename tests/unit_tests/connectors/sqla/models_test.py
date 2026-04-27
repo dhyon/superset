@@ -909,6 +909,67 @@ def test_sqla_table_link_escapes_url(mocker: MockerFixture) -> None:
     assert "<script>" not in str(link)
 
 
+@pytest.mark.parametrize(
+    "url,expected_href",
+    [
+        ("javascript:alert(1)", ""),
+        ("data:text/html,<script>alert(1)</script>", ""),
+        ("vbscript:MsgBox(1)", ""),
+        ("JAVASCRIPT:alert(1)", ""),
+        (
+            "/explore/?datasource_type=table&datasource_id=1",
+            "/explore/?datasource_type=table&amp;datasource_id=1",
+        ),
+        ("https://example.com/explore", "https://example.com/explore"),
+        ("http://example.com/explore", "http://example.com/explore"),
+    ],
+    ids=[
+        "javascript-scheme",
+        "data-scheme",
+        "vbscript-scheme",
+        "javascript-uppercase",
+        "relative-url",
+        "https-url",
+        "http-url",
+    ],
+)
+def test_sqla_table_link_rejects_dangerous_schemes(
+    mocker: MockerFixture,
+    url: str,
+    expected_href: str,
+) -> None:
+    """Verify that only http, https, and relative URLs appear in the href."""
+    database = Database(database_name="my_db")
+    table = SqlaTable(table_name="safe_name", database=database, id=1)
+    mocker.patch.object(
+        SqlaTable,
+        "explore_url",
+        new_callable=mocker.PropertyMock,
+        return_value=url,
+    )
+    link_str = str(table.link)
+    assert f'href="{expected_href}"' in link_str
+
+
+def test_sqla_table_link_escapes_name_in_text(mocker: MockerFixture) -> None:
+    """Verify that the link text is HTML-escaped via Markup.format()."""
+    database = Database(database_name="my_db")
+    table = SqlaTable(
+        table_name='<img src=x onerror="alert(1)">',
+        database=database,
+        id=1,
+    )
+    mocker.patch.object(
+        SqlaTable,
+        "explore_url",
+        new_callable=mocker.PropertyMock,
+        return_value="/explore/?datasource_type=table&datasource_id=1",
+    )
+    link_str = str(table.link)
+    assert "<img" not in link_str
+    assert "&lt;img" in link_str
+
+
 def test_data_for_slices_handles_missing_datasource(mocker: MockerFixture) -> None:
     """
     Test that data_for_slices gracefully handles a chart whose query_context
