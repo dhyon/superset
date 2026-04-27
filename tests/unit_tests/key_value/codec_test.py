@@ -14,14 +14,19 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+from collections import OrderedDict
 from contextlib import nullcontext
+from datetime import datetime, timedelta
 from typing import Any
 
 import pytest
 from marshmallow import Schema
 
 from superset.dashboards.permalink.schemas import DashboardPermalinkSchema
-from superset.key_value.exceptions import KeyValueCodecEncodeException
+from superset.key_value.exceptions import (
+    KeyValueCodecDecodeException,
+    KeyValueCodecEncodeException,
+)
 from superset.key_value.types import (
     JsonKeyValueCodec,
     MarshmallowKeyValueCodec,
@@ -120,3 +125,46 @@ def test_pickle_codec(input_: Any, expected_result: Any):
     codec = PickleKeyValueCodec()
     encoded_value = codec.encode(input_)
     assert expected_result == codec.decode(encoded_value)
+
+
+@pytest.mark.parametrize(
+    "input_,expected_result",
+    [
+        (
+            OrderedDict([("a", 1), ("b", 2)]),
+            OrderedDict([("a", 1), ("b", 2)]),
+        ),
+        (
+            {"ts": datetime(2024, 1, 1), "delta": timedelta(seconds=30)},
+            {"ts": datetime(2024, 1, 1), "delta": timedelta(seconds=30)},
+        ),
+    ],
+)
+def test_pickle_codec_allowed_types(input_: Any, expected_result: Any) -> None:
+    codec = PickleKeyValueCodec()
+    encoded_value = codec.encode(input_)
+    assert expected_result == codec.decode(encoded_value)
+
+
+def test_pickle_codec_rejects_os_system() -> None:
+    """Crafted pickle payload referencing os.system must be rejected."""
+    payload = (
+        b"\x80\x04\x95\x1f\x00\x00\x00\x00\x00\x00\x00"
+        b"\x8c\x05posix\x94\x8c\x06system\x94\x93\x94"
+        b"\x8c\x04true\x94\x85\x94R\x94."
+    )
+    codec = PickleKeyValueCodec()
+    with pytest.raises(KeyValueCodecDecodeException, match="forbidden"):
+        codec.decode(payload)
+
+
+def test_pickle_codec_rejects_eval() -> None:
+    """Pickle payload referencing builtins.eval must be rejected."""
+    payload = (
+        b"\x80\x04\x95\x1d\x00\x00\x00\x00\x00\x00\x00"
+        b"\x8c\x08builtins\x94\x8c\x04eval\x94\x93\x94"
+        b"\x8c\x011\x94\x85\x94R\x94."
+    )
+    codec = PickleKeyValueCodec()
+    with pytest.raises(KeyValueCodecDecodeException, match="forbidden"):
+        codec.decode(payload)
