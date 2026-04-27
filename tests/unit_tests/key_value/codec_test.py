@@ -14,6 +14,8 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+import os
+import pickle
 from contextlib import nullcontext
 from typing import Any
 
@@ -21,7 +23,10 @@ import pytest
 from marshmallow import Schema
 
 from superset.dashboards.permalink.schemas import DashboardPermalinkSchema
-from superset.key_value.exceptions import KeyValueCodecEncodeException
+from superset.key_value.exceptions import (
+    KeyValueCodecDecodeException,
+    KeyValueCodecEncodeException,
+)
 from superset.key_value.types import (
     JsonKeyValueCodec,
     MarshmallowKeyValueCodec,
@@ -120,3 +125,47 @@ def test_pickle_codec(input_: Any, expected_result: Any):
     codec = PickleKeyValueCodec()
     encoded_value = codec.encode(input_)
     assert expected_result == codec.decode(encoded_value)
+
+
+@pytest.mark.parametrize(
+    "safe_value",
+    [
+        {"key": "value"},
+        [1, 2, 3],
+        {1, 2, 3},
+        (1, "two", 3.0),
+        42,
+        3.14,
+        "hello",
+        b"bytes",
+        True,
+        complex(1, 2),
+        frozenset({1, 2}),
+        None,
+    ],
+)
+def test_pickle_codec_allows_safe_types(safe_value: Any) -> None:
+    codec = PickleKeyValueCodec()
+    encoded = codec.encode(safe_value)
+    assert codec.decode(encoded) == safe_value
+
+
+def test_pickle_codec_rejects_arbitrary_class() -> None:
+    """Crafted pickle payload referencing os.system must be rejected."""
+    payload = pickle.dumps(os.getcwd)
+    codec = PickleKeyValueCodec()
+    with pytest.raises(KeyValueCodecDecodeException, match="Forbidden pickle class"):
+        codec.decode(payload)
+
+
+def test_pickle_codec_rejects_reduce_exploit() -> None:
+    """A __reduce__-based exploit payload must be rejected."""
+
+    class Exploit:
+        def __reduce__(self) -> tuple[Any, ...]:
+            return (os.system, ("echo pwned",))
+
+    payload = pickle.dumps(Exploit())
+    codec = PickleKeyValueCodec()
+    with pytest.raises(KeyValueCodecDecodeException, match="Forbidden pickle class"):
+        codec.decode(payload)
